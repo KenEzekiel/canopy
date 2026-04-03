@@ -21,7 +21,25 @@ function validateAppName(name: string): void {
 
 /** Shell-escape a value for use in double quotes */
 function shellEscape(val: string): string {
-  return val.replace(/["\\$`!]/g, '\\$&');
+  return val.replace(/["\\$`!\n]/g, '\\$&');
+}
+
+const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function validateEnvVars(env: Record<string, string>): void {
+  for (const key of Object.keys(env)) {
+    if (!ENV_KEY_REGEX.test(key)) {
+      throw new Error(`Invalid env var key "${key}". Use letters, numbers, and underscores only (e.g. "DATABASE_URL").`);
+    }
+  }
+}
+
+/** Format for deploy failures after provisioning */
+function failWithCleanupHint(name: string, status: string, error: string): DeployResult {
+  return {
+    status,
+    error: `${error}\n\nServer was provisioned but deploy failed. Run \`canopy destroy ${name}\` to clean up, or retry with \`canopy deploy\`.`,
+  };
 }
 
 interface DeployOpts {
@@ -47,6 +65,7 @@ interface DeployResult {
  */
 export async function deploy({ projectPath, name, env, force = false, log = noop }: DeployOpts): Promise<DeployResult> {
   validateAppName(name);
+  if (env) validateEnvVars(env);
   const absPath = path.resolve(projectPath);
 
   // 1. Scan
@@ -92,11 +111,7 @@ export async function deploy({ projectPath, name, env, force = false, log = noop
     serverId = server.serverId;
     log('provision', `Server created: ${serverIp} (ID: ${serverId})`);
 
-    log('provision', 'Waiting for SSH (cloud-init installing Docker + nginx)...');
-    await waitForSSH(serverIp, 180000);
-    log('provision', 'Server ready');
-
-    // Save state immediately so we track the server even if deploy fails later
+    // Save state immediately so we track the server even if SSH/deploy fails
     saveDeployment(name, {
       serverId,
       serverIp,
@@ -105,7 +120,11 @@ export async function deploy({ projectPath, name, env, force = false, log = noop
       lastDeploy: '',
       createdAt: new Date().toISOString(),
     });
-    log('state', 'Server tracked in state (pre-deploy)');
+    log('state', 'Server tracked in state');
+
+    log('provision', 'Waiting for SSH (cloud-init installing Docker + nginx)...');
+    await waitForSSH(serverIp, 180000);
+    log('provision', 'Server ready');
   }
 
   // 4. Generate Dockerfile if not present
@@ -149,7 +168,7 @@ export async function deploy({ projectPath, name, env, force = false, log = noop
 
   if (buildResult.exitCode !== 0) {
     log('build', `Build failed after ${buildTime}s`);
-    return { status: 'build-failed', error: buildResult.stderr || buildResult.stdout };
+    return failWithCleanupHint(name, 'build-failed', buildResult.stderr || buildResult.stdout);
   }
   log('build', `Build complete (${buildTime}s)`);
 
@@ -158,17 +177,30 @@ export async function deploy({ projectPath, name, env, force = false, log = noop
   await sshExec(serverIp, `docker stop ${name} 2>/dev/null; docker rm ${name} 2>/dev/null`);
 
   const port = getContainerPort(framework);
-  const envFlags = env
-    ? Object.entries(env).map(([k, v]) => `-e ${shellEscape(k)}="${shellEscape(v)}"`).join(' ')
-    : '';
+
+  // Write env vars to a file on server (avoids shell injection via -e flags)
+  let envFileFlag = '';
+  if (env && Object.keys(env).length > 0) {
+    const envFileContent = Object.entries(env)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('\n');
+    await sshExec(serverIp, `cat > /tmp/${name}.env << 'ENVFILE_EOF'\n${envFileContent}\nENVFILE_EOF`);
+    envFileFlag = `--env-file /tmp/${name}.env`;
+  }
 
   log('container', `Starting container (port ${port})...`);
   const runResult = await sshExec(serverIp,
-    `docker run -d --name ${name} --restart unless-stopped ${envFlags} -p ${port}:${port} ${name}`
+    `docker run -d --name ${name} --restart unless-stopped ${envFileFlag} -p ${port}:${port} ${name}`
   );
+
+  // Clean up env file after container starts
+  if (envFileFlag) {
+    await sshExec(serverIp, `rm -f /tmp/${name}.env`);
+  }
+
   if (runResult.exitCode !== 0) {
     log('container', 'Container failed to start');
-    return { status: 'run-failed', error: runResult.stderr || runResult.stdout };
+    return failWithCleanupHint(name, 'run-failed', runResult.stderr || runResult.stdout);
   }
   log('container', 'Container running');
 

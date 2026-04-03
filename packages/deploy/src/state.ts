@@ -16,6 +16,7 @@ export interface DeploymentState {
 }
 
 const STATE_PATH: string = path.join(CANOPY_DIR, 'deployments.json');
+const STATE_TMP_PATH: string = path.join(CANOPY_DIR, 'deployments.json.tmp');
 
 function loadState(): DeploymentState {
   try {
@@ -26,7 +27,9 @@ function loadState(): DeploymentState {
 }
 
 function writeState(state: DeploymentState): void {
-  fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2) + '\n');
+  const data = JSON.stringify(state, null, 2) + '\n';
+  fs.writeFileSync(STATE_TMP_PATH, data);
+  fs.renameSync(STATE_TMP_PATH, STATE_PATH);
 }
 
 export function getDeployment(name: string): DeploymentInfo | null {

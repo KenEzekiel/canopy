@@ -1,6 +1,8 @@
 import { getDeployment } from './state';
 import { sshExec } from './ssh';
 
+const APP_NAME_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
+
 interface StatusResult {
   status: string;
   name?: string;
@@ -12,6 +14,7 @@ interface StatusResult {
 }
 
 export async function getStatus(name: string): Promise<StatusResult> {
+  if (!APP_NAME_REGEX.test(name)) throw new Error(`Invalid app name "${name}".`);
   const deployment = getDeployment(name);
   if (!deployment) return { status: 'not-found' };
 
