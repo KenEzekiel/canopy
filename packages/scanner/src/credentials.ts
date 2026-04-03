@@ -1,10 +1,6 @@
-'use strict';
+import * as path from 'path';
+import { Finding } from './types';
 
-const path = require('path');
-
-/**
- * Common AI-generated test credentials that ship to production.
- */
 const TEST_CREDENTIAL_PATTERNS = [
   { pattern: /(['"`])admin\1\s*[,;]?\s*.*(['"`])admin123\2/i, name: 'admin/admin123' },
   { pattern: /(['"`])admin\1\s*[,;]?\s*.*(['"`])password\2/i, name: 'admin/password' },
@@ -16,35 +12,17 @@ const TEST_CREDENTIAL_PATTERNS = [
   { pattern: /secret\s*[:=]\s*(['"`])secret\1/i, name: 'secret=secret' },
 ];
 
-/**
- * Paths that are legitimately expected to have test credentials (seed files, test fixtures).
- */
 const SEED_FILE_PATTERNS = [
-  /seed/i,
-  /fixture/i,
-  /mock/i,
-  /\/__tests__\//i,
-  /\.test\.[jt]sx?$/i,
-  /\.spec\.[jt]sx?$/i,
+  /seed/i, /fixture/i, /mock/i,
+  /\/__tests__\//i, /\.test\.[jt]sx?$/i, /\.spec\.[jt]sx?$/i,
 ];
 
-/**
- * Check for hardcoded test credentials in source code.
- * Only flags files that are NOT seed/test files (those are expected).
- * @param {string} filePath - Relative file path
- * @param {string} content - File content
- * @returns {import('./types').Finding[]}
- */
-function detectTestCredentials(filePath, content) {
-  const findings = [];
+export function detectTestCredentials(filePath: string, content: string): Finding[] {
+  const findings: Finding[] = [];
   const ext = path.extname(filePath).toLowerCase();
 
-  // Only check code files
   if (!['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.rb'].includes(ext)) return findings;
-
-  // Skip seed/test files — test credentials are expected there
-  const isSeedOrTest = SEED_FILE_PATTERNS.some((p) => p.test(filePath));
-  if (isSeedOrTest) return findings;
+  if (SEED_FILE_PATTERNS.some((p) => p.test(filePath))) return findings;
 
   const lines = content.split('\n');
 
@@ -52,7 +30,6 @@ function detectTestCredentials(filePath, content) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (cred.pattern.test(line)) {
-        // Skip comments
         const trimmed = line.trim();
         if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('*')) continue;
 
@@ -65,12 +42,10 @@ function detectTestCredentials(filePath, content) {
           description: `Test credentials (${cred.name}) are hardcoded in production code. AI coding tools often generate these during development and they ship to production.\n\nImpact: An attacker can try these default credentials to gain access to your application or admin panel.`,
           fix: 'Remove hardcoded credentials. Use environment variables for any auth configuration, and ensure seed/test data is not included in production builds.',
         });
-        break; // One finding per pattern type per file
+        break;
       }
     }
   }
 
   return findings;
 }
-
-module.exports = { detectTestCredentials };

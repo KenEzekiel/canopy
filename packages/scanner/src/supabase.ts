@@ -1,46 +1,29 @@
-'use strict';
+import * as fs from 'fs';
+import * as path from 'path';
+import { Finding } from './types';
 
-const fs = require('fs');
-const path = require('path');
-
-/**
- * Client-side path patterns where a Supabase anon key is dangerous.
- */
 const CLIENT_PATHS = [
   /^src\/(app|pages|components|lib|utils|hooks)\//,
-  /^app\//,
-  /^pages\//,
-  /^components\//,
-  /^lib\//,
-  /^frontend\//,
-  /^client\//,
-  /^public\//,
+  /^app\//, /^pages\//, /^components\//, /^lib\//,
+  /^frontend\//, /^client\//, /^public\//,
 ];
 
-/**
- * Deep Supabase security check:
- * 1. Is createClient() called with a hardcoded key in client-side code?
- * 2. Does a supabase/migrations folder exist with RLS policies?
- * @param {string[]} files - All relative file paths
- * @param {string} projectRoot - Absolute project root
- * @returns {import('./types').Finding[]}
- */
-function checkSupabaseSecurity(files, projectRoot) {
-  const findings = [];
+const jwtPattern = /eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/;
+const createClientPattern = /createClient\s*\(/;
+const serviceRoleInString = /['"`].*service[_-]?role.*['"`]/i;
 
-  // Find files that call createClient with what looks like a hardcoded key
-  const supabaseClientFiles = [];
-  const jwtPattern = /eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/;
-  const createClientPattern = /createClient\s*\(/;
+export function checkSupabaseSecurity(files: string[], projectRoot: string): Finding[] {
+  const findings: Finding[] = [];
+
+  const supabaseClientFiles: { relPath: string; content: string; isClientSide: boolean }[] = [];
 
   for (const relPath of files) {
     const ext = path.extname(relPath).toLowerCase();
     if (!['.js', '.jsx', '.ts', '.tsx', '.mjs'].includes(ext)) continue;
 
-    const fullPath = path.join(projectRoot, relPath);
-    let content;
+    let content: string;
     try {
-      content = fs.readFileSync(fullPath, 'utf-8');
+      content = fs.readFileSync(path.join(projectRoot, relPath), 'utf-8');
     } catch { continue; }
 
     if (createClientPattern.test(content) && jwtPattern.test(content)) {
@@ -51,13 +34,9 @@ function checkSupabaseSecurity(files, projectRoot) {
 
   if (supabaseClientFiles.length === 0) return findings;
 
-  // Check for RLS: look for supabase/migrations folder with policy statements
   const hasRLS = checkForRLS(files, projectRoot);
 
   for (const { relPath, content, isClientSide } of supabaseClientFiles) {
-    // Check if the key is the service_role key (catastrophic)
-    // Only match service_role inside a string literal (quoted), not in comments or variable names
-    const serviceRoleInString = /['"`].*service[_-]?role.*['"`]/i;
     if (serviceRoleInString.test(content)) {
       const lines = content.split('\n');
       const lineIdx = lines.findIndex((l) => serviceRoleInString.test(l) && !l.trim().startsWith('//') && !l.trim().startsWith('*'));
@@ -93,31 +72,17 @@ function checkSupabaseSecurity(files, projectRoot) {
   return findings;
 }
 
-/**
- * Check if the project has RLS policies in supabase migrations.
- * @param {string[]} files
- * @param {string} projectRoot
- * @returns {boolean}
- */
-function checkForRLS(files, projectRoot) {
-  // Look for supabase/migrations directory
+function checkForRLS(files: string[], projectRoot: string): boolean {
   const migrationFiles = files.filter((f) =>
     f.startsWith('supabase/migrations/') || f.startsWith('supabase\\migrations\\')
   );
-
   if (migrationFiles.length === 0) return false;
 
-  // Check if any migration file mentions RLS
   for (const mf of migrationFiles) {
     try {
       const content = fs.readFileSync(path.join(projectRoot, mf), 'utf-8');
-      if (/ENABLE ROW LEVEL SECURITY/i.test(content) || /CREATE POLICY/i.test(content)) {
-        return true;
-      }
+      if (/ENABLE ROW LEVEL SECURITY/i.test(content) || /CREATE POLICY/i.test(content)) return true;
     } catch { continue; }
   }
-
   return false;
 }
-
-module.exports = { checkSupabaseSecurity };

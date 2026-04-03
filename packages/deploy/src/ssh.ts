@@ -1,26 +1,37 @@
-'use strict';
+import fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
+import os from 'os';
+import { Client } from 'ssh2';
+import { CANOPY_DIR } from './config';
 
-const fs = require('fs');
-const path = require('path');
-const { Client } = require('ssh2');
-const { CANOPY_DIR } = require('./config');
+export interface SSHKey {
+  publicKey: string;
+  privateKey: string;
+  path: string;
+}
 
-const KEYS_DIR = path.join(CANOPY_DIR, 'keys');
-const PRIVATE_KEY_PATH = path.join(KEYS_DIR, 'canopy_ed25519');
-const PUBLIC_KEY_PATH = path.join(KEYS_DIR, 'canopy_ed25519.pub');
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+const KEYS_DIR: string = path.join(CANOPY_DIR, 'keys');
+const PRIVATE_KEY_PATH: string = path.join(KEYS_DIR, 'canopy_ed25519');
+const PUBLIC_KEY_PATH: string = path.join(KEYS_DIR, 'canopy_ed25519.pub');
 
 /**
  * Generate an ed25519 SSH key pair using ssh-keygen (OpenSSH format).
  * ssh2 requires OpenSSH format, not PKCS8 PEM.
  */
-function generateSSHKeyPair() {
+function generateSSHKeyPair(): SSHKey {
   if (!fs.existsSync(KEYS_DIR)) fs.mkdirSync(KEYS_DIR, { recursive: true });
 
   // Remove old keys if they exist (might be in wrong format)
   if (fs.existsSync(PRIVATE_KEY_PATH)) fs.unlinkSync(PRIVATE_KEY_PATH);
   if (fs.existsSync(PUBLIC_KEY_PATH)) fs.unlinkSync(PUBLIC_KEY_PATH);
 
-  const { execSync } = require('child_process');
   execSync(`ssh-keygen -t ed25519 -f "${PRIVATE_KEY_PATH}" -N "" -C "canopy@canopy.sh"`, {
     stdio: 'pipe',
   });
@@ -34,7 +45,7 @@ function generateSSHKeyPair() {
 /**
  * Ensure SSH key exists, generate if not.
  */
-function ensureSSHKey() {
+export function ensureSSHKey(): SSHKey {
   if (fs.existsSync(PRIVATE_KEY_PATH) && fs.existsSync(PUBLIC_KEY_PATH)) {
     return {
       publicKey: fs.readFileSync(PUBLIC_KEY_PATH, 'utf-8').trim(),
@@ -45,10 +56,11 @@ function ensureSSHKey() {
   return generateSSHKeyPair();
 }
 
+
 /**
  * Get an SSH connection to a server.
  */
-function getConnection(ip) {
+function getConnection(ip: string): Promise<Client> {
   const key = ensureSSHKey();
   return new Promise((resolve, reject) => {
     const conn = new Client();
@@ -67,16 +79,16 @@ function getConnection(ip) {
 /**
  * Execute a command on a remote server via SSH.
  */
-async function sshExec(ip, command) {
+export async function sshExec(ip: string, command: string): Promise<ExecResult> {
   const conn = await getConnection(ip);
   return new Promise((resolve, reject) => {
     conn.exec(command, (err, stream) => {
       if (err) { conn.end(); return reject(err); }
       let stdout = '';
       let stderr = '';
-      stream.on('data', (d) => { stdout += d.toString(); });
-      stream.stderr.on('data', (d) => { stderr += d.toString(); });
-      stream.on('close', (code) => {
+      stream.on('data', (d: Buffer) => { stdout += d.toString(); });
+      stream.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+      stream.on('close', (code: number) => {
         conn.end();
         resolve({ stdout, stderr, exitCode: code });
       });
@@ -85,21 +97,10 @@ async function sshExec(ip, command) {
 }
 
 /**
- * Upload a directory to a remote server via SFTP.
- * Excludes node_modules, .git, dist, build.
- */
-/**
- * Upload a directory to a remote server using tar + scp (via ssh2).
- * Much faster than SFTP file-by-file for projects with many files.
- * Excludes node_modules, .git, dist, build, .next, .cache.
- */
-/**
  * Upload a directory to a remote server using tar + native scp.
  * Much faster than ssh2 SFTP. Excludes node_modules, .git, dist, build, .next, .cache.
  */
-async function sshUpload(ip, localPath, remotePath) {
-  const { execSync } = require('child_process');
-  const os = require('os');
+export async function sshUpload(ip: string, localPath: string, remotePath: string): Promise<void> {
   const tarPath = path.join(os.tmpdir(), `canopy-upload-${Date.now()}.tar.gz`);
 
   try {
@@ -125,12 +126,10 @@ async function sshUpload(ip, localPath, remotePath) {
   }
 }
 
-
-
 /**
  * Wait for SSH to become available on a server.
  */
-async function waitForSSH(ip, timeoutMs = 120000) {
+export async function waitForSSH(ip: string, timeoutMs: number = 120000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -138,10 +137,8 @@ async function waitForSSH(ip, timeoutMs = 120000) {
       conn.end();
       return;
     } catch {
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise<void>((r) => setTimeout(r, 5000));
     }
   }
   throw new Error(`SSH not available on ${ip} after ${timeoutMs / 1000}s`);
 }
-
-module.exports = { generateSSHKeyPair, ensureSSHKey, sshExec, sshUpload, waitForSSH };

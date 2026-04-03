@@ -2,10 +2,10 @@
   "name": "@canopy/scanner",
   "version": "1.0.0",
   "description": "Security scanner engine for Canopy",
-  "main": "src/index.js",
-  "types": "src/types.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "test": "node --test src/__tests__/"
+    "build": "tsc"
   },
   "keywords": ["security", "scanner"],
   "license": "ISC"

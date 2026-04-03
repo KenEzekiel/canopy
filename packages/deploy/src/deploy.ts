@@ -1,26 +1,42 @@
-'use strict';
+import fs from 'fs';
+import path from 'path';
+import { scan, type ScanResult } from '@canopy/scanner';
+import { detectFramework } from './detect';
+import { generateDockerfile, getContainerPort } from './dockerfile';
+import { getDeployment, saveDeployment } from './state';
+import { ensureSSHKey, sshExec, sshUpload, waitForSSH } from './ssh';
+import { uploadSSHKey, createServer } from './provision';
+import type { DeploymentInfo } from './state';
+import type { Framework } from './detect';
 
-const fs = require('fs');
-const path = require('path');
-const { scan } = require('@canopy/scanner');
-const { detectFramework } = require('./detect');
-const { generateDockerfile, getContainerPort } = require('./dockerfile');
-const { getDeployment, saveDeployment } = require('./state');
-const { ensureSSHKey, sshExec, sshUpload, waitForSSH } = require('./ssh');
-const { uploadSSHKey, createServer } = require('./provision');
+const noop = (): void => {};
 
-const noop = () => {};
+interface DeployOpts {
+  projectPath: string;
+  name: string;
+  env?: Record<string, string>;
+  log?: (phase: string, message: string) => void;
+}
+
+interface DeployResult {
+  status: string;
+  reason?: string;
+  scan?: ScanResult;
+  url?: string;
+  ip?: string;
+  framework?: Framework;
+  error?: string;
+}
 
 /**
  * Deploy a project to a Hetzner VPS.
- * @param {{ projectPath: string, name: string, env?: Record<string, string>, log?: Function }} opts
  */
-async function deploy({ projectPath, name, env, log = noop }) {
+export async function deploy({ projectPath, name, env, log = noop }: DeployOpts): Promise<DeployResult> {
   const absPath = path.resolve(projectPath);
 
   // 1. Scan
   log('scan', 'Running security scan...');
-  const scanResult = scan(absPath);
+  const scanResult: ScanResult = scan(absPath);
   log('scan', `Score: ${scanResult.score}/100 (${scanResult.findings.length} findings)`);
 
   if (scanResult.findings.some((f) => f.severity === 'critical')) {
@@ -33,13 +49,13 @@ async function deploy({ projectPath, name, env, log = noop }) {
   }
 
   // 2. Detect framework
-  const framework = detectFramework(absPath);
+  const framework: Framework = detectFramework(absPath);
   log('detect', `Framework: ${framework}`);
 
   // 3. Check state
   let deployment = getDeployment(name);
-  let serverIp;
-  let serverId;
+  let serverIp: string;
+  let serverId: number;
 
   if (deployment) {
     serverIp = deployment.serverIp;
@@ -65,7 +81,7 @@ async function deploy({ projectPath, name, env, log = noop }) {
 
   // 4. Generate Dockerfile if not present
   const hasDockerfile = fs.existsSync(path.join(absPath, 'Dockerfile'));
-  let generatedDockerfile = null;
+  let generatedDockerfile: string | null = null;
   if (!hasDockerfile) {
     generatedDockerfile = generateDockerfile(framework, absPath);
     log('dockerfile', `Generated Dockerfile for ${framework}`);
@@ -157,5 +173,3 @@ async function deploy({ projectPath, name, env, log = noop }) {
     scan: scanResult,
   };
 }
-
-module.exports = { deploy };

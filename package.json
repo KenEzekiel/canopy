@@ -6,10 +6,15 @@
     "packages/*"
   ],
   "scripts": {
+    "build": "npm run build -w packages/scanner && npm run build -w packages/deploy && npm run build -w packages/cli",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": ""
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^5.9.3"
+  }
 }

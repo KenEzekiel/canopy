@@ -1,25 +1,24 @@
-'use strict';
+import fs from 'fs';
+import path from 'path';
 
-const fs = require('fs');
-const path = require('path');
+export type Framework = 'nextjs' | 'vite-react' | 'node-api' | 'generic-node' | 'static';
+export type PackageManager = 'pnpm' | 'yarn' | 'npm';
 
 /**
  * Detect the framework used in a project.
- * @param {string} projectPath
- * @returns {'nextjs'|'vite-react'|'node-api'|'generic-node'|'static'}
  */
-function detectFramework(projectPath) {
+export function detectFramework(projectPath: string): Framework {
   const pkgPath = path.join(projectPath, 'package.json');
   if (!fs.existsSync(pkgPath)) return 'static';
 
-  let pkg;
+  let pkg: Record<string, any>;
   try {
     pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
   } catch {
     return 'static';
   }
 
-  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+  const deps: Record<string, string> = { ...pkg.dependencies, ...pkg.devDependencies };
 
   if (deps['next']) return 'nextjs';
   if (deps['vite'] || deps['@vitejs/plugin-react']) return 'vite-react';
@@ -31,15 +30,14 @@ function detectFramework(projectPath) {
 /**
  * Detect the entry point for a node-api project.
  */
-function detectEntryPoint(projectPath) {
+export function detectEntryPoint(projectPath: string): string {
   const pkgPath = path.join(projectPath, 'package.json');
   if (!fs.existsSync(pkgPath)) return 'src/index.js';
 
   try {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
     if (pkg.main) return pkg.main;
-    // Parse scripts.start for "node xxx"
-    const start = pkg.scripts?.start;
+    const start: string | undefined = pkg.scripts?.start;
     if (start) {
       const match = start.match(/node\s+(\S+)/);
       if (match) return match[1];
@@ -51,13 +49,9 @@ function detectEntryPoint(projectPath) {
 
 /**
  * Detect the package manager used in a project.
- * @param {string} projectPath
- * @returns {'pnpm'|'yarn'|'npm'}
  */
-function detectPackageManager(projectPath) {
+export function detectPackageManager(projectPath: string): PackageManager {
   if (fs.existsSync(path.join(projectPath, 'pnpm-lock.yaml'))) return 'pnpm';
   if (fs.existsSync(path.join(projectPath, 'yarn.lock'))) return 'yarn';
   return 'npm';
 }
-
-module.exports = { detectFramework, detectEntryPoint, detectPackageManager };

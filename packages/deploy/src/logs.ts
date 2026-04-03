@@ -1,9 +1,13 @@
-'use strict';
+import { getDeployment } from './state';
+import { sshExec } from './ssh';
 
-const { getDeployment } = require('./state');
-const { sshExec } = require('./ssh');
+interface LogsResult {
+  status?: string;
+  name?: string;
+  logs?: string;
+}
 
-async function getLogs(name, lines = 100) {
+export async function getLogs(name: string, lines: number = 100): Promise<LogsResult> {
   const deployment = getDeployment(name);
   if (!deployment) return { status: 'not-found' };
 
@@ -13,5 +17,3 @@ async function getLogs(name, lines = 100) {
 
   return { name, logs: result.stdout };
 }
-
-module.exports = { getLogs };

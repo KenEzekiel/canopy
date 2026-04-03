@@ -1,9 +1,17 @@
-'use strict';
+import { getDeployment } from './state';
+import { sshExec } from './ssh';
 
-const { getDeployment } = require('./state');
-const { sshExec } = require('./ssh');
+interface StatusResult {
+  status: string;
+  name?: string;
+  url?: string;
+  ip?: string;
+  container?: string;
+  framework?: string;
+  lastDeploy?: string;
+}
 
-async function getStatus(name) {
+export async function getStatus(name: string): Promise<StatusResult> {
   const deployment = getDeployment(name);
   if (!deployment) return { status: 'not-found' };
 
@@ -21,5 +29,3 @@ async function getStatus(name) {
     lastDeploy: deployment.lastDeploy,
   };
 }
-
-module.exports = { getStatus };

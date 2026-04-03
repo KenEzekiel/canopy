@@ -1,10 +1,6 @@
-'use strict';
+import { SecretPattern } from './types';
 
-/**
- * Secret detection regex patterns from the brief.
- * Each pattern has a name, regex, severity, and optional context.
- */
-const SECRET_PATTERNS = [
+export const SECRET_PATTERNS: SecretPattern[] = [
   {
     name: 'Supabase Anon Key',
     pattern: /eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/,
@@ -72,18 +68,12 @@ const SECRET_PATTERNS = [
   },
 ];
 
-/**
- * Files/directories to always skip when walking the tree.
- */
-const SKIP_DIRS = new Set([
+export const SKIP_DIRS = new Set([
   'node_modules', '.git', '.next', 'dist', 'build', 'coverage',
   '.cache', '.turbo', '.vercel', '.output', 'vendor', '__pycache__',
 ]);
 
-/**
- * File extensions to scan for secrets and code patterns.
- */
-const SCANNABLE_EXTENSIONS = new Set([
+export const SCANNABLE_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
   '.json', '.yaml', '.yml', '.toml',
   '.py', '.rb', '.go', '.rs', '.java',
@@ -93,5 +83,3 @@ const SCANNABLE_EXTENSIONS = new Set([
   '.md', '.txt',
   '.pem', '.key', '.cert',
 ]);
-
-module.exports = { SECRET_PATTERNS, SKIP_DIRS, SCANNABLE_EXTENSIONS };

@@ -1,9 +1,12 @@
 {
   "name": "@canopy/cli",
   "version": "1.0.0",
-  "description": "Canopy CLI — security scanner for vibecoded apps",
+  "description": "Canopy CLI — security scanner & deploy tool for vibecoded apps",
   "bin": {
-    "canopy": "src/index.js"
+    "canopy": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc"
   },
   "dependencies": {
     "commander": "^12.0.0",
