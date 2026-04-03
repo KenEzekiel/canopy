@@ -44,6 +44,7 @@ export interface DeployOpts {
   env?: Record<string, string>;
   force?: boolean;
   newServer?: boolean;
+  region?: string;
   log?: (phase: string, message: string) => void;
 }
 
@@ -58,7 +59,7 @@ export interface DeployResult {
   error?: string;
 }
 
-export async function deploy({ projectPath, name, env, force = false, newServer = false, log = noop }: DeployOpts): Promise<DeployResult> {
+export async function deploy({ projectPath, name, env, force = false, newServer = false, region, log = noop }: DeployOpts): Promise<DeployResult> {
   validateAppName(name);
   if (env) validateEnvVars(env);
   const absPath = path.resolve(projectPath);
@@ -104,14 +105,14 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
       log('state', `Adding ${name} to existing server ${serverIp} (port ${appPort})`);
     } else {
       // No server available — provision new
-      const result = await provisionNewServer(name, log);
+      const result = await provisionNewServer(name, log, region);
       serverIp = result.serverIp;
       serverId = result.serverId;
       appPort = 3001;
     }
   } else {
     // --new flag: force new server
-    const result = await provisionNewServer(name, log);
+    const result = await provisionNewServer(name, log, region);
     serverIp = result.serverIp;
     serverId = result.serverId;
     appPort = 3001;
@@ -243,7 +244,8 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
 
 async function provisionNewServer(
   name: string,
-  log: (phase: string, msg: string) => void
+  log: (phase: string, msg: string) => void,
+  region?: string,
 ): Promise<{ serverIp: string; serverId: string }> {
   log('provision', 'Generating SSH key...');
   const sshKey = ensureSSHKey();
@@ -251,8 +253,9 @@ async function provisionNewServer(
   log('provision', 'Uploading SSH key to Hetzner...');
   const sshKeyId = await uploadSSHKey(sshKey.publicKey);
 
-  log('provision', 'Creating server (cx23, Helsinki)...');
-  const server = await createServer({ name, sshKeyId });
+  const loc = region || 'hel1';
+  log('provision', `Creating server (cx23, ${loc})...`);
+  const server = await createServer({ name, sshKeyId, location: loc });
   const serverIp = server.ip;
   const serverId = `srv-${server.serverId}`;
   log('provision', `Server created: ${serverIp} (ID: ${server.serverId})`);
@@ -261,7 +264,7 @@ async function provisionNewServer(
   saveServer(serverId, {
     id: server.serverId,
     ip: serverIp,
-    location: 'hel1',
+    location: loc,
     createdAt: new Date().toISOString(),
     apps: [],
   });

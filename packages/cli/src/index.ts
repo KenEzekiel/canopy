@@ -9,6 +9,7 @@ import {
 } from '@canopy/deploy';
 import type { CanopyState } from '@canopy/deploy';
 import * as path from 'path';
+import * as fs from 'fs';
 import type { Finding, ScanSummary, ScanMeta, Severity } from '@canopy/scanner';
 
 const c = {
@@ -112,16 +113,43 @@ program.command('init').description('Initialize Canopy config').action(() => {
 
 program.command('deploy [path]').description('Deploy a project to a Hetzner VPS')
   .requiredOption('--name <name>', 'App name (used for subdomain)')
-  .option('--json', 'Output raw JSON').option('--verbose', 'Show detailed deploy progress').option('--force', 'Skip scanner gate (deploy with critical findings)').option('--new', 'Force new server (don\'t reuse existing)')
-  .action(async (targetPath: string | undefined, opts: { name: string; json?: boolean; verbose?: boolean; force?: boolean; new?: boolean }) => {
+  .option('--json', 'Output raw JSON')
+  .option('--verbose', 'Show detailed deploy progress')
+  .option('--force', 'Skip scanner gate (deploy with critical findings)')
+  .option('--new', 'Force new server (don\'t reuse existing)')
+  .option('--region <region>', 'Server region (fsn1, nbg1, hel1, ash, hil, sin)', 'hel1')
+  .option('--env-file <path>', 'Path to .env file to load')
+  .action(async (targetPath: string | undefined, opts: {
+    name: string; json?: boolean; verbose?: boolean; force?: boolean;
+    new?: boolean; region?: string; envFile?: string;
+  }) => {
     const projectPath = path.resolve(targetPath || process.cwd());
+
+    // Load env vars from --env-file if provided
+    let envVars: Record<string, string> | undefined;
+    if (opts.envFile) {
+      const envPath = path.resolve(opts.envFile);
+      if (!fs.existsSync(envPath)) { console.error(`  ${c.red}Error:${c.reset} Env file not found: ${envPath}`); process.exit(2); }
+      envVars = {};
+      const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx > 0) envVars[trimmed.slice(0, eqIdx)] = trimmed.slice(eqIdx + 1);
+      }
+    }
+
     const verboseLog = opts.verbose
       ? (phase: string, msg: string) => { const icon = PHASE_ICONS[phase] || PHASE_ICONS.default; console.log(`  ${c.dim}${icon}${c.reset} ${c.dim}[${phase}]${c.reset} ${msg}`); }
       : undefined;
     try {
       console.log(); console.log(`  ${c.bold}canopy deploy${c.reset}  ${c.dim}${projectPath}${c.reset}`);
       console.log(`  ${c.dim}name: ${opts.name}${c.reset}`); console.log();
-      const result = await deploy({ projectPath, name: opts.name, force: opts.force, newServer: opts.new, log: verboseLog });
+      const result = await deploy({
+        projectPath, name: opts.name, env: envVars,
+        force: opts.force, newServer: opts.new, region: opts.region, log: verboseLog,
+      });
       if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
       if (result.status === 'blocked') { console.log(`  ${c.red}✗${c.reset} Deploy blocked: ${result.reason}`); if (result.scan) { printScore(result.scan.score); printFindings(result.scan.findings); } process.exit(1); }
       if (result.status === 'build-failed') { console.log(`  ${c.red}✗${c.reset} Build failed:`); console.log(result.error); process.exit(1); }
