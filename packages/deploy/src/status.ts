@@ -8,6 +8,7 @@ interface StatusResult {
   name?: string;
   url?: string;
   ip?: string;
+  port?: number;
   container?: string;
   framework?: string;
   lastDeploy?: string;
@@ -27,6 +28,7 @@ export async function getStatus(name: string): Promise<StatusResult> {
     status: 'ok',
     url: deployment.domain,
     ip: deployment.serverIp,
+    port: deployment.port,
     container: containerStatus.stdout.trim(),
     framework: deployment.framework,
     lastDeploy: deployment.lastDeploy,

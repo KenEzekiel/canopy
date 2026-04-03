@@ -5,7 +5,9 @@ import { scan } from '@canopy/scanner';
 import {
   deploy, getStatus, getLogs, loadConfig, saveConfig,
   listDeployments, removeDeployment, deleteServer, getDeployment,
+  getServerForApp, removeServer, sshExec,
 } from '@canopy/deploy';
+import type { CanopyState } from '@canopy/deploy';
 import * as path from 'path';
 import type { Finding, ScanSummary, ScanMeta, Severity } from '@canopy/scanner';
 
@@ -110,8 +112,8 @@ program.command('init').description('Initialize Canopy config').action(() => {
 
 program.command('deploy [path]').description('Deploy a project to a Hetzner VPS')
   .requiredOption('--name <name>', 'App name (used for subdomain)')
-  .option('--json', 'Output raw JSON').option('--verbose', 'Show detailed deploy progress').option('--force', 'Skip scanner gate (deploy with critical findings)')
-  .action(async (targetPath: string | undefined, opts: { name: string; json?: boolean; verbose?: boolean; force?: boolean }) => {
+  .option('--json', 'Output raw JSON').option('--verbose', 'Show detailed deploy progress').option('--force', 'Skip scanner gate (deploy with critical findings)').option('--new', 'Force new server (don\'t reuse existing)')
+  .action(async (targetPath: string | undefined, opts: { name: string; json?: boolean; verbose?: boolean; force?: boolean; new?: boolean }) => {
     const projectPath = path.resolve(targetPath || process.cwd());
     const verboseLog = opts.verbose
       ? (phase: string, msg: string) => { const icon = PHASE_ICONS[phase] || PHASE_ICONS.default; console.log(`  ${c.dim}${icon}${c.reset} ${c.dim}[${phase}]${c.reset} ${msg}`); }
@@ -119,14 +121,14 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
     try {
       console.log(); console.log(`  ${c.bold}canopy deploy${c.reset}  ${c.dim}${projectPath}${c.reset}`);
       console.log(`  ${c.dim}name: ${opts.name}${c.reset}`); console.log();
-      const result = await deploy({ projectPath, name: opts.name, force: opts.force, log: verboseLog });
+      const result = await deploy({ projectPath, name: opts.name, force: opts.force, newServer: opts.new, log: verboseLog });
       if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
       if (result.status === 'blocked') { console.log(`  ${c.red}✗${c.reset} Deploy blocked: ${result.reason}`); if (result.scan) { printScore(result.scan.score); printFindings(result.scan.findings); } process.exit(1); }
       if (result.status === 'build-failed') { console.log(`  ${c.red}✗${c.reset} Build failed:`); console.log(result.error); process.exit(1); }
       if (result.status === 'run-failed') { console.log(`  ${c.red}✗${c.reset} Container failed to start:`); console.log(result.error); process.exit(1); }
       console.log(`  ${c.green}✓${c.reset} Deployed`);
       console.log(`  ${c.dim}URL:${c.reset}       ${result.url}`);
-      console.log(`  ${c.dim}IP:${c.reset}        ${result.ip}`);
+      console.log(`  ${c.dim}IP:${c.reset}        ${result.ip}:${result.port}`);
       console.log(`  ${c.dim}Framework:${c.reset} ${result.framework}`);
       console.log(`  ${c.dim}Score:${c.reset}     ${result.scan?.score}/100`);
       console.log();
@@ -157,23 +159,60 @@ program.command('logs <name>').description('Get app logs').option('--lines <n>',
 
 program.command('list').description('List all deployments').option('--json', 'Output raw JSON')
   .action((opts: { json?: boolean }) => {
-    const deployments = listDeployments();
-    const names = Object.keys(deployments);
-    if (opts.json) { console.log(JSON.stringify(deployments, null, 2)); return; }
-    if (names.length === 0) { console.log(`  ${c.dim}No deployments yet.${c.reset}`); return; }
+    const state = listDeployments();
+    if (opts.json) { console.log(JSON.stringify(state, null, 2)); return; }
+    const appNames = Object.keys(state.apps || {});
+    if (appNames.length === 0) { console.log(`  ${c.dim}No deployments yet.${c.reset}`); return; }
+
     console.log();
-    for (const name of names) { const d = deployments[name]; console.log(`  ${c.bold}${name}${c.reset}  ${c.dim}${d.domain}  ${d.serverIp}  ${d.framework}  ${d.lastDeploy}${c.reset}`); }
-    console.log();
+    // Group apps by server
+    const serverApps: Record<string, string[]> = {};
+    for (const [name, app] of Object.entries(state.apps)) {
+      if (!serverApps[app.serverId]) serverApps[app.serverId] = [];
+      serverApps[app.serverId].push(name);
+    }
+
+    for (const [srvId, apps] of Object.entries(serverApps)) {
+      const srv = state.servers?.[srvId];
+      const ip = srv?.ip || 'unknown';
+      const loc = srv?.location || '?';
+      console.log(`  ${c.dim}${srvId}${c.reset}  ${c.dim}${ip} (${loc})${c.reset}  ${c.dim}${apps.length} app(s)${c.reset}`);
+      for (const name of apps) {
+        const app = state.apps[name];
+        console.log(`    ${c.bold}${name}${c.reset}  ${c.dim}:${app.port}  ${app.framework}  ${app.lastDeploy || 'pending'}${c.reset}`);
+      }
+      console.log();
+    }
   });
 
-program.command('destroy <name>').description('Delete server and remove deployment')
+program.command('destroy <name>').description('Remove an app (deletes server if last app)')
   .action(async (name: string) => {
     try {
-      const dep = getDeployment(name);
-      if (!dep) { console.log(`  ${c.yellow}!${c.reset} No deployment found for "${name}"`); process.exit(1); }
-      console.log(`  Deleting server ${dep.serverId} (${dep.serverIp})...`);
-      await deleteServer(dep.serverId); removeDeployment(name);
-      console.log(`  ${c.green}✓${c.reset} Destroyed ${name}`);
+      const app = getDeployment(name);
+      if (!app) { console.log(`  ${c.yellow}!${c.reset} No deployment found for "${name}"`); process.exit(1); }
+
+      // Stop container on server
+      console.log(`  Stopping container ${name}...`);
+      try {
+        await sshExec(app.serverIp, `docker stop ${name} 2>/dev/null; docker rm ${name} 2>/dev/null`);
+        await sshExec(app.serverIp, `rm -f /etc/nginx/sites-enabled/${name} /etc/nginx/sites-available/${name}`);
+        await sshExec(app.serverIp, `nginx -t && systemctl reload nginx 2>/dev/null`);
+        await sshExec(app.serverIp, `rm -rf /home/canopy/${name}`);
+      } catch { /* server might be unreachable, continue with state cleanup */ }
+
+      // Check if this is the last app on the server
+      const srvInfo = getServerForApp(name);
+      removeDeployment(name);
+
+      if (srvInfo && srvInfo.server.apps.length <= 1) {
+        // Last app — delete the server
+        console.log(`  Last app on server — deleting server ${srvInfo.server.id}...`);
+        await deleteServer(srvInfo.server.id);
+        removeServer(srvInfo.serverId);
+        console.log(`  ${c.green}✓${c.reset} Destroyed ${name} and server ${srvInfo.server.ip}`);
+      } else {
+        console.log(`  ${c.green}✓${c.reset} Removed ${name} (server still has other apps)`);
+      }
     } catch (err: any) { console.error(`  ${c.red}Error:${c.reset} ${err.message}`); process.exit(2); }
   });
 
