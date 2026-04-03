@@ -1,0 +1,343 @@
+#!/usr/bin/env node
+'use strict';
+
+const { program } = require('commander');
+const { scan } = require('@canopy/scanner');
+const {
+  deploy, getStatus, getLogs, loadConfig, saveConfig,
+  listDeployments, removeDeployment, deleteServer, getDeployment,
+} = require('@canopy/deploy');
+const path = require('path');
+
+// ─── ANSI colors (no dependency) ────────────────────────────────────────────
+
+const c = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  cyan: '\x1b[36m',
+  white: '\x1b[37m',
+  bgRed: '\x1b[41m',
+  bgGreen: '\x1b[42m',
+  bgYellow: '\x1b[43m',
+};
+
+const SEVERITY_COLORS = {
+  critical: c.red,
+  high: c.yellow,
+  medium: c.cyan,
+  low: c.dim,
+};
+
+const SEVERITY_LABELS = {
+  critical: `${c.bgRed}${c.white}${c.bold} CRITICAL ${c.reset}`,
+  high: `${c.bgYellow}${c.bold} HIGH ${c.reset}`,
+  medium: `${c.cyan}${c.bold}MEDIUM${c.reset}`,
+  low: `${c.dim}LOW${c.reset}`,
+};
+
+// ─── Score display ──────────────────────────────────────────────────────────
+
+function scoreColor(score) {
+  if (score < 40) return c.red;
+  if (score < 70) return c.yellow;
+  return c.green;
+}
+
+function printScore(score) {
+  const color = scoreColor(score);
+  console.log();
+  console.log(`  ${color}${c.bold}${score}${c.reset}${c.dim}/100${c.reset}  Security Score`);
+  console.log();
+}
+
+// ─── Findings display ───────────────────────────────────────────────────────
+
+function printFindings(findings) {
+  if (findings.length === 0) {
+    console.log(`  ${c.green}✓${c.reset} No security issues found.`);
+    console.log();
+    return;
+  }
+
+  // Group by severity
+  const groups = { critical: [], high: [], medium: [], low: [] };
+  for (const f of findings) {
+    groups[f.severity].push(f);
+  }
+
+  for (const severity of ['critical', 'high', 'medium', 'low']) {
+    const items = groups[severity];
+    if (items.length === 0) continue;
+
+    console.log(`  ${SEVERITY_LABELS[severity]}  ${c.dim}(${items.length})${c.reset}`);
+    console.log();
+
+    for (const f of items) {
+      const loc = f.line ? `${f.file}:${f.line}` : f.file;
+      console.log(`  ${SEVERITY_COLORS[severity]}●${c.reset} ${c.bold}${f.title}${c.reset}`);
+      console.log(`    ${c.dim}${loc}${c.reset}`);
+
+      if (f.snippet) {
+        console.log();
+        for (const line of f.snippet.split('\n')) {
+          console.log(`    ${c.dim}${line}${c.reset}`);
+        }
+      }
+
+      // Show first paragraph of description (skip impact for brevity)
+      const desc = f.description.split('\n\n')[0];
+      console.log();
+      console.log(`    ${desc}`);
+
+      console.log();
+      console.log(`    ${c.green}Fix:${c.reset} ${f.fix}`);
+      console.log();
+    }
+  }
+}
+
+// ─── Meta display ───────────────────────────────────────────────────────────
+
+function printMeta(meta, summary) {
+  const parts = [
+    `${meta.filesScanned} files scanned`,
+    `${meta.timeMs}ms`,
+  ];
+  const counts = [];
+  if (summary.critical > 0) counts.push(`${c.red}${summary.critical} critical${c.reset}`);
+  if (summary.high > 0) counts.push(`${c.yellow}${summary.high} high${c.reset}`);
+  if (summary.medium > 0) counts.push(`${c.cyan}${summary.medium} medium${c.reset}`);
+  if (summary.low > 0) counts.push(`${c.dim}${summary.low} low${c.reset}`);
+
+  if (counts.length > 0) {
+    console.log(`  ${c.dim}${parts.join(' · ')} · ${c.reset}${counts.join(', ')}`);
+  } else {
+    console.log(`  ${c.dim}${parts.join(' · ')}${c.reset}`);
+  }
+  console.log();
+}
+
+// ─── CLI ────────────────────────────────────────────────────────────────────
+
+program
+  .name('canopy')
+  .description('Security scanner & deploy tool for vibecoded apps')
+  .version('1.0.0');
+
+program
+  .command('scan [path]')
+  .description('Scan a project for security issues')
+  .option('--json', 'Output raw JSON')
+  .action((targetPath, opts) => {
+    const projectPath = targetPath || process.cwd();
+    const resolved = path.resolve(projectPath);
+
+    try {
+      const result = scan(resolved);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.summary.critical > 0 ? 1 : 0);
+      }
+
+      console.log();
+      console.log(`  ${c.bold}canopy scan${c.reset}  ${c.dim}${resolved}${c.reset}`);
+
+      printScore(result.score);
+      printFindings(result.findings);
+      printMeta(result.meta, result.summary);
+
+      process.exit(result.summary.critical > 0 ? 1 : 0);
+    } catch (err) {
+      console.error(`${c.red}Error:${c.reset} ${err.message}`);
+      process.exit(2);
+    }
+  });
+
+// ─── Init command ───────────────────────────────────────────────────────────
+
+program
+  .command('init')
+  .description('Initialize Canopy config')
+  .action(() => {
+    const config = loadConfig();
+    const token = process.env.CANOPY_HETZNER_TOKEN;
+    if (token) {
+      console.log(`  ${c.green}✓${c.reset} Hetzner token found in CANOPY_HETZNER_TOKEN env var`);
+    } else if (config.hetznerToken) {
+      console.log(`  ${c.green}✓${c.reset} Hetzner token found in config`);
+    } else {
+      console.log(`  ${c.yellow}!${c.reset} No Hetzner token. Set CANOPY_HETZNER_TOKEN env var to deploy.`);
+    }
+    saveConfig(config);
+    console.log(`  ${c.green}✓${c.reset} Config saved to ~/.canopy/config.json`);
+  });
+
+// ─── Deploy command ─────────────────────────────────────────────────────────
+
+program
+  .command('deploy [path]')
+  .description('Deploy a project to a Hetzner VPS')
+  .requiredOption('--name <name>', 'App name (used for subdomain)')
+  .option('--json', 'Output raw JSON')
+  .option('--verbose', 'Show detailed deploy progress')
+  .action(async (targetPath, opts) => {
+    const projectPath = path.resolve(targetPath || process.cwd());
+
+    const PHASE_ICONS = {
+      scan: '🔍', detect: '🔎', state: '💾', provision: '☁️ ',
+      dockerfile: '🐳', upload: '📦', build: '🔨', container: '▶️ ',
+      nginx: '🌐', default: '  ',
+    };
+
+    const verboseLog = opts.verbose
+      ? (phase, msg) => {
+          const icon = PHASE_ICONS[phase] || PHASE_ICONS.default;
+          console.log(`  ${c.dim}${icon}${c.reset} ${c.dim}[${phase}]${c.reset} ${msg}`);
+        }
+      : undefined;
+
+    try {
+      console.log();
+      console.log(`  ${c.bold}canopy deploy${c.reset}  ${c.dim}${projectPath}${c.reset}`);
+      console.log(`  ${c.dim}name: ${opts.name}${c.reset}`);
+      console.log();
+
+      const result = await deploy({ projectPath, name: opts.name, log: verboseLog });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(result.status === 'deployed' ? 0 : 1);
+      }
+
+      if (result.status === 'blocked') {
+        console.log(`  ${c.red}✗${c.reset} Deploy blocked: ${result.reason}`);
+        printScore(result.scan.score);
+        printFindings(result.scan.findings);
+        process.exit(1);
+      }
+
+      if (result.status === 'build-failed') {
+        console.log(`  ${c.red}✗${c.reset} Build failed:`);
+        console.log(result.error);
+        process.exit(1);
+      }
+
+      if (result.status === 'run-failed') {
+        console.log(`  ${c.red}✗${c.reset} Container failed to start:`);
+        console.log(result.error);
+        process.exit(1);
+      }
+
+      console.log(`  ${c.green}✓${c.reset} Deployed`);
+      console.log(`  ${c.dim}URL:${c.reset}       ${result.url}`);
+      console.log(`  ${c.dim}IP:${c.reset}        ${result.ip}`);
+      console.log(`  ${c.dim}Framework:${c.reset} ${result.framework}`);
+      console.log(`  ${c.dim}Score:${c.reset}     ${result.scan.score}/100`);
+      console.log();
+    } catch (err) {
+      console.error(`  ${c.red}Error:${c.reset} ${err.message}`);
+      process.exit(2);
+    }
+  });
+
+// ─── Status command ─────────────────────────────────────────────────────────
+
+program
+  .command('status <name>')
+  .description('Check app status')
+  .option('--json', 'Output raw JSON')
+  .action(async (name, opts) => {
+    try {
+      const result = await getStatus(name);
+      if (opts.json) { console.log(JSON.stringify(result, null, 2)); return; }
+      if (result.status === 'not-found') {
+        console.log(`  ${c.yellow}!${c.reset} No deployment found for "${name}"`);
+        process.exit(1);
+      }
+      console.log();
+      console.log(`  ${c.bold}${name}${c.reset}`);
+      console.log(`  ${c.dim}Container:${c.reset} ${result.container}`);
+      console.log(`  ${c.dim}URL:${c.reset}       ${result.url}`);
+      console.log(`  ${c.dim}IP:${c.reset}        ${result.ip}`);
+      console.log(`  ${c.dim}Framework:${c.reset} ${result.framework}`);
+      console.log(`  ${c.dim}Deployed:${c.reset}  ${result.lastDeploy}`);
+      console.log();
+    } catch (err) {
+      console.error(`  ${c.red}Error:${c.reset} ${err.message}`);
+      process.exit(2);
+    }
+  });
+
+// ─── Logs command ───────────────────────────────────────────────────────────
+
+program
+  .command('logs <name>')
+  .description('Get app logs')
+  .option('--lines <n>', 'Number of lines', '100')
+  .action(async (name, opts) => {
+    try {
+      const result = await getLogs(name, parseInt(opts.lines, 10));
+      if (result.status === 'not-found') {
+        console.log(`  ${c.yellow}!${c.reset} No deployment found for "${name}"`);
+        process.exit(1);
+      }
+      console.log(result.logs);
+    } catch (err) {
+      console.error(`  ${c.red}Error:${c.reset} ${err.message}`);
+      process.exit(2);
+    }
+  });
+
+// ─── List command ───────────────────────────────────────────────────────────
+
+program
+  .command('list')
+  .description('List all deployments')
+  .option('--json', 'Output raw JSON')
+  .action((opts) => {
+    const deployments = listDeployments();
+    const names = Object.keys(deployments);
+
+    if (opts.json) { console.log(JSON.stringify(deployments, null, 2)); return; }
+
+    if (names.length === 0) {
+      console.log(`  ${c.dim}No deployments yet.${c.reset}`);
+      return;
+    }
+
+    console.log();
+    for (const name of names) {
+      const d = deployments[name];
+      console.log(`  ${c.bold}${name}${c.reset}  ${c.dim}${d.domain}  ${d.serverIp}  ${d.framework}  ${d.lastDeploy}${c.reset}`);
+    }
+    console.log();
+  });
+
+// ─── Destroy command ────────────────────────────────────────────────────────
+
+program
+  .command('destroy <name>')
+  .description('Delete server and remove deployment')
+  .action(async (name) => {
+    try {
+      const dep = getDeployment(name);
+      if (!dep) {
+        console.log(`  ${c.yellow}!${c.reset} No deployment found for "${name}"`);
+        process.exit(1);
+      }
+      console.log(`  Deleting server ${dep.serverId} (${dep.serverIp})...`);
+      await deleteServer(dep.serverId);
+      removeDeployment(name);
+      console.log(`  ${c.green}✓${c.reset} Destroyed ${name}`);
+    } catch (err) {
+      console.error(`  ${c.red}Error:${c.reset} ${err.message}`);
+      process.exit(2);
+    }
+  });
+
+program.parse();

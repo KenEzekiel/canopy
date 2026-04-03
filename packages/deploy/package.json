@@ -1,0 +1,11 @@
+{
+  "name": "@canopy/deploy",
+  "version": "1.0.0",
+  "description": "Canopy deploy engine — provision, build, deploy to Hetzner VPS",
+  "main": "src/index.js",
+  "dependencies": {
+    "ssh2": "^1.16.0",
+    "@canopy/scanner": "1.0.0"
+  },
+  "license": "ISC"
+}

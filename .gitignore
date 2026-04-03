@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+dist/
+build/
+.next/
+.cache/
+.DS_Store
+*.log
+.kiro/
+obsidian-docs
+obsidian-docs/
+.kiro/
