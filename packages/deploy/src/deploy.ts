@@ -68,7 +68,7 @@ export async function deploy({ projectPath, name, env, log = noop }: DeployOpts)
     log('provision', 'Uploading SSH key to Hetzner...');
     const sshKeyId = await uploadSSHKey(sshKey.publicKey);
 
-    log('provision', 'Creating server (cpx12, Singapore)...');
+    log('provision', 'Creating server (cx22, Falkenstein)...');
     const server = await createServer({ name, sshKeyId });
     serverIp = server.ip;
     serverId = server.serverId;

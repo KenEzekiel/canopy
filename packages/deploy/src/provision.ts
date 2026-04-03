@@ -79,12 +79,12 @@ interface CreateServerResult {
 /**
  * Create a CX22 server on Hetzner.
  */
-export async function createServer({ name, sshKeyId, location = 'sin' }: CreateServerOpts): Promise<CreateServerResult> {
+export async function createServer({ name, sshKeyId, location = 'fsn1' }: CreateServerOpts): Promise<CreateServerResult> {
   const { server } = await hetznerFetch<{ server: HetznerServer }>('/servers', {
     method: 'POST',
     body: JSON.stringify({
       name: `canopy-${name}`,
-      server_type: 'cpx12',
+      server_type: 'cx22',
       image: 'ubuntu-24.04',
       ssh_keys: [sshKeyId],
       location,
