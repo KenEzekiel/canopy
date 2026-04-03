@@ -111,9 +111,14 @@ export async function rsyncUpload(ip: string, localPath: string, remotePath: str
       `rsync -azq --delete ${excludes} -e "ssh -i '${PRIVATE_KEY_PATH}' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" "${localPath}/" root@${ip}:${remotePath}/`,
       { stdio: 'pipe' }
     );
-  } catch {
-    // rsync not available, fall back to tar+scp
-    await sshUpload(ip, localPath, remotePath);
+  } catch (err: any) {
+    // Only fallback to tar+scp if rsync binary is not found
+    const msg = err.stderr?.toString() || err.message || '';
+    if (msg.includes('command not found') || msg.includes('No such file') || err.status === 127) {
+      await sshUpload(ip, localPath, remotePath);
+    } else {
+      throw new Error(`rsync failed: ${msg}`);
+    }
   }
 }
 

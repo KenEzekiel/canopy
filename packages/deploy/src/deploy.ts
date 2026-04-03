@@ -19,11 +19,6 @@ function validateAppName(name: string): void {
   }
 }
 
-/** Shell-escape a value for use in double quotes */
-function shellEscape(val: string): string {
-  return val.replace(/["\\$`!\n]/g, '\\$&');
-}
-
 const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function validateEnvVars(env: Record<string, string>): void {
