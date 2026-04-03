@@ -77,7 +77,7 @@ interface CreateServerResult {
 }
 
 /**
- * Create a CX22 server on Hetzner.
+ * Create a cx23 server on Hetzner.
  */
 export async function createServer({ name, sshKeyId, location = 'hel1' }: CreateServerOpts): Promise<CreateServerResult> {
   const { server } = await hetznerFetch<{ server: HetznerServer }>('/servers', {

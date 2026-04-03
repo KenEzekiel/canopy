@@ -1,7 +1,7 @@
 export { deploy } from './deploy';
 export { getStatus } from './status';
 export { getLogs } from './logs';
-export { loadConfig, saveConfig, getHetznerToken } from './config';
+export { loadConfig, saveConfig, getHetznerToken, getDomain } from './config';
 export {
   getDeployment, saveDeployment, listDeployments, removeDeployment,
   getServerInfo, saveServer, removeServer, findAvailableServer,
@@ -12,3 +12,5 @@ export { deleteServer } from './provision';
 export { sshExec } from './ssh';
 export { detectFramework } from './detect';
 export { generateDockerfile } from './dockerfile';
+export { setupVPN, addVPNClient, restrictToVPN } from './vpn';
+export { validateAppName } from './validation';

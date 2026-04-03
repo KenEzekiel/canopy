@@ -9,17 +9,11 @@ import {
 } from './state';
 import { ensureSSHKey, sshExec, sshUpload, rsyncUpload, waitForSSH } from './ssh';
 import { uploadSSHKey, createServer } from './provision';
+import { getDomain } from './config';
+import { validateAppName } from './validation';
 import type { Framework } from './detect';
 
 const noop = (): void => {};
-
-const APP_NAME_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
-
-function validateAppName(name: string): void {
-  if (!APP_NAME_REGEX.test(name) || name.length > 63) {
-    throw new Error(`Invalid app name "${name}". Use lowercase letters, numbers, and hyphens only (e.g. "my-app").`);
-  }
-}
 
 const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -45,6 +39,7 @@ export interface DeployOpts {
   force?: boolean;
   newServer?: boolean;
   region?: string;
+  noSsl?: boolean;
   log?: (phase: string, message: string) => void;
 }
 
@@ -59,10 +54,12 @@ export interface DeployResult {
   error?: string;
 }
 
-export async function deploy({ projectPath, name, env, force = false, newServer = false, region, log = noop }: DeployOpts): Promise<DeployResult> {
+export async function deploy({ projectPath, name, env, force = false, newServer = false, region, noSsl = false, log = noop }: DeployOpts): Promise<DeployResult> {
   validateAppName(name);
   if (env) validateEnvVars(env);
   const absPath = path.resolve(projectPath);
+  const domain = getDomain();
+  const appDomain = `${name}.${domain}`;
 
   // 1. Scan
   log('scan', 'Running security scan...');
@@ -124,7 +121,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
       serverId,
       serverIp,
       port: appPort,
-      domain: `${name}.canopy.sh`,
+      domain: appDomain,
       framework,
       lastDeploy: '',
       createdAt: new Date().toISOString(),
@@ -205,7 +202,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   log('nginx', 'Configuring reverse proxy...');
   const nginxConf = `server {
     listen 80;
-    server_name ${name}.canopy.sh;
+    server_name ${appDomain};
     location / {
         proxy_pass http://localhost:${appPort};
         proxy_set_header Host \\$host;
@@ -220,21 +217,37 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   await sshExec(serverIp, `nginx -t && systemctl reload nginx`);
   log('nginx', 'Nginx configured');
 
-  // 9. Update state
+  // 9. SSL via certbot (unless --no-ssl)
+  if (!noSsl) {
+    log('ssl', `Setting up SSL for ${appDomain}...`);
+    const sslResult = await sshExec(serverIp,
+      `certbot --nginx -d ${appDomain} --non-interactive --agree-tos -m admin@${domain} 2>&1`
+    );
+    if (sslResult.exitCode !== 0) {
+      log('ssl', `SSL setup failed (non-blocking): ${sslResult.stdout.slice(-200)}`);
+    } else {
+      log('ssl', 'SSL configured');
+    }
+  } else {
+    log('ssl', 'SSL skipped (--no-ssl)');
+  }
+
+  // 10. Update state
   saveDeployment(name, {
     serverId,
     serverIp,
     port: appPort,
-    domain: `${name}.canopy.sh`,
+    domain: appDomain,
     framework,
     lastDeploy: new Date().toISOString(),
     createdAt: getDeployment(name)?.createdAt || new Date().toISOString(),
   });
   log('state', 'Deployment state saved');
 
+  const protocol = noSsl ? 'http' : 'https';
   return {
     status: 'deployed',
-    url: `https://${name}.canopy.sh`,
+    url: `${protocol}://${appDomain}`,
     ip: serverIp,
     port: appPort,
     framework,

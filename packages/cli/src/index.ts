@@ -5,7 +5,7 @@ import { scan } from '@canopy/scanner';
 import {
   deploy, getStatus, getLogs, loadConfig, saveConfig,
   listDeployments, removeDeployment, deleteServer, getDeployment,
-  getServerForApp, removeServer, sshExec,
+  getServerForApp, removeServer, sshExec, validateAppName,
 } from '@canopy/deploy';
 import type { CanopyState } from '@canopy/deploy';
 import * as path from 'path';
@@ -83,7 +83,7 @@ function printMeta(meta: ScanMeta, summary: ScanSummary): void {
 const PHASE_ICONS: Record<string, string> = {
   scan: '🔍', detect: '🔎', state: '💾', provision: '☁️ ',
   dockerfile: '🐳', upload: '📦', build: '🔨', container: '▶️ ',
-  nginx: '🌐', default: '  ',
+  nginx: '🌐', ssl: '🔒', default: '  ',
 };
 
 program.name('canopy').description('Security scanner & deploy tool for vibecoded apps').version('1.0.0');
@@ -119,9 +119,10 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
   .option('--new', 'Force new server (don\'t reuse existing)')
   .option('--region <region>', 'Server region (fsn1, nbg1, hel1, ash, hil, sin)', 'hel1')
   .option('--env-file <path>', 'Path to .env file to load')
+  .option('--no-ssl', 'Skip SSL/certbot setup')
   .action(async (targetPath: string | undefined, opts: {
     name: string; json?: boolean; verbose?: boolean; force?: boolean;
-    new?: boolean; region?: string; envFile?: string;
+    new?: boolean; region?: string; envFile?: string; ssl?: boolean;
   }) => {
     const projectPath = path.resolve(targetPath || process.cwd());
 
@@ -148,7 +149,8 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
       console.log(`  ${c.dim}name: ${opts.name}${c.reset}`); console.log();
       const result = await deploy({
         projectPath, name: opts.name, env: envVars,
-        force: opts.force, newServer: opts.new, region: opts.region, log: verboseLog,
+        force: opts.force, newServer: opts.new, region: opts.region,
+        noSsl: opts.ssl === false, log: verboseLog,
       });
       if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
       if (result.status === 'blocked') { console.log(`  ${c.red}✗${c.reset} Deploy blocked: ${result.reason}`); if (result.scan) { printScore(result.scan.score); printFindings(result.scan.findings); } process.exit(1); }
@@ -218,6 +220,7 @@ program.command('destroy <name>').description('Remove an app (deletes server if 
     try {
       const app = getDeployment(name);
       if (!app) { console.log(`  ${c.yellow}!${c.reset} No deployment found for "${name}"`); process.exit(1); }
+      validateAppName(name);
 
       // Stop container on server
       console.log(`  Stopping container ${name}...`);

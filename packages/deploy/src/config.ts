@@ -5,6 +5,7 @@ import os from 'os';
 export interface CanopyConfig {
   apiKey: string | null;
   hetznerToken: string | null;
+  domain: string | null;
 }
 
 export const CANOPY_DIR: string = path.join(os.homedir(), '.canopy');
@@ -19,7 +20,7 @@ export function loadConfig(): CanopyConfig {
   try {
     return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
   } catch {
-    return { apiKey: null, hetznerToken: null };
+    return { apiKey: null, hetznerToken: null, domain: null };
   }
 }
 
@@ -37,4 +38,16 @@ export function getHetznerToken(): string {
   const envToken = process.env.CANOPY_HETZNER_TOKEN;
   if (!envToken) throw new Error('No Hetzner token configured. Set CANOPY_HETZNER_TOKEN env var or run canopy init.');
   return envToken;
+}
+
+/**
+ * Returns the base domain for app subdomains.
+ * Config > CANOPY_DOMAIN env var. No hardcoded default.
+ */
+export function getDomain(): string {
+  const config = loadConfig();
+  if (config.domain) return config.domain;
+  const envDomain = process.env.CANOPY_DOMAIN;
+  if (!envDomain) throw new Error('No domain configured. Set CANOPY_DOMAIN env var or add "domain" to ~/.canopy/config.json.');
+  return envDomain;
 }

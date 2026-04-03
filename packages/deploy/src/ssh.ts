@@ -132,7 +132,7 @@ export async function sshUpload(ip: string, localPath: string, remotePath: strin
   try {
     // Create tar locally
     execSync(
-      `tar -czf "${tarPath}" --exclude=node_modules --exclude=.git --exclude=dist --exclude=build --exclude=.next --exclude=.cache -C "${localPath}" .`,
+      `tar -czf "${tarPath}" --exclude=node_modules --exclude=.git --exclude=dist --exclude=build --exclude=.next --exclude=.cache --exclude='.env' --exclude='.env.*' -C "${localPath}" .`,
       { stdio: 'pipe' }
     );
 
