@@ -110,8 +110,8 @@ program.command('init').description('Initialize Canopy config').action(() => {
 
 program.command('deploy [path]').description('Deploy a project to a Hetzner VPS')
   .requiredOption('--name <name>', 'App name (used for subdomain)')
-  .option('--json', 'Output raw JSON').option('--verbose', 'Show detailed deploy progress')
-  .action(async (targetPath: string | undefined, opts: { name: string; json?: boolean; verbose?: boolean }) => {
+  .option('--json', 'Output raw JSON').option('--verbose', 'Show detailed deploy progress').option('--force', 'Skip scanner gate (deploy with critical findings)')
+  .action(async (targetPath: string | undefined, opts: { name: string; json?: boolean; verbose?: boolean; force?: boolean }) => {
     const projectPath = path.resolve(targetPath || process.cwd());
     const verboseLog = opts.verbose
       ? (phase: string, msg: string) => { const icon = PHASE_ICONS[phase] || PHASE_ICONS.default; console.log(`  ${c.dim}${icon}${c.reset} ${c.dim}[${phase}]${c.reset} ${msg}`); }
@@ -119,7 +119,7 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
     try {
       console.log(); console.log(`  ${c.bold}canopy deploy${c.reset}  ${c.dim}${projectPath}${c.reset}`);
       console.log(`  ${c.dim}name: ${opts.name}${c.reset}`); console.log();
-      const result = await deploy({ projectPath, name: opts.name, log: verboseLog });
+      const result = await deploy({ projectPath, name: opts.name, force: opts.force, log: verboseLog });
       if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
       if (result.status === 'blocked') { console.log(`  ${c.red}✗${c.reset} Deploy blocked: ${result.reason}`); if (result.scan) { printScore(result.scan.score); printFindings(result.scan.findings); } process.exit(1); }
       if (result.status === 'build-failed') { console.log(`  ${c.red}✗${c.reset} Build failed:`); console.log(result.error); process.exit(1); }

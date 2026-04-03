@@ -4,17 +4,31 @@ import { scan, type ScanResult } from '@canopy/scanner';
 import { detectFramework } from './detect';
 import { generateDockerfile, getContainerPort } from './dockerfile';
 import { getDeployment, saveDeployment } from './state';
-import { ensureSSHKey, sshExec, sshUpload, waitForSSH } from './ssh';
+import { ensureSSHKey, sshExec, sshUpload, rsyncUpload, waitForSSH } from './ssh';
 import { uploadSSHKey, createServer } from './provision';
 import type { DeploymentInfo } from './state';
 import type { Framework } from './detect';
 
 const noop = (): void => {};
 
+const APP_NAME_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
+
+function validateAppName(name: string): void {
+  if (!APP_NAME_REGEX.test(name) || name.length > 63) {
+    throw new Error(`Invalid app name "${name}". Use lowercase letters, numbers, and hyphens only (e.g. "my-app").`);
+  }
+}
+
+/** Shell-escape a value for use in double quotes */
+function shellEscape(val: string): string {
+  return val.replace(/["\\$`!]/g, '\\$&');
+}
+
 interface DeployOpts {
   projectPath: string;
   name: string;
   env?: Record<string, string>;
+  force?: boolean;
   log?: (phase: string, message: string) => void;
 }
 
@@ -31,7 +45,8 @@ interface DeployResult {
 /**
  * Deploy a project to a Hetzner VPS.
  */
-export async function deploy({ projectPath, name, env, log = noop }: DeployOpts): Promise<DeployResult> {
+export async function deploy({ projectPath, name, env, force = false, log = noop }: DeployOpts): Promise<DeployResult> {
+  validateAppName(name);
   const absPath = path.resolve(projectPath);
 
   // 1. Scan
@@ -39,13 +54,16 @@ export async function deploy({ projectPath, name, env, log = noop }: DeployOpts)
   const scanResult: ScanResult = scan(absPath);
   log('scan', `Score: ${scanResult.score}/100 (${scanResult.findings.length} findings)`);
 
-  if (scanResult.findings.some((f) => f.severity === 'critical')) {
-    log('scan', 'Blocked — critical issues found');
+  if (scanResult.findings.some((f) => f.severity === 'critical') && !force) {
+    log('scan', 'Blocked — critical issues found (use --force to override)');
     return {
       status: 'blocked',
-      reason: 'Critical security issues found. Fix them before deploying.',
+      reason: 'Critical security issues found. Fix them before deploying, or use --force to skip.',
       scan: scanResult,
     };
+  }
+  if (force && scanResult.findings.some((f) => f.severity === 'critical')) {
+    log('scan', 'Warning: deploying with critical issues (--force)');
   }
 
   // 2. Detect framework
@@ -68,7 +86,7 @@ export async function deploy({ projectPath, name, env, log = noop }: DeployOpts)
     log('provision', 'Uploading SSH key to Hetzner...');
     const sshKeyId = await uploadSSHKey(sshKey.publicKey);
 
-    log('provision', 'Creating server (cx22, Falkenstein)...');
+    log('provision', 'Creating server (cx23, Helsinki)...');
     const server = await createServer({ name, sshKeyId });
     serverIp = server.ip;
     serverId = server.serverId;
@@ -77,6 +95,17 @@ export async function deploy({ projectPath, name, env, log = noop }: DeployOpts)
     log('provision', 'Waiting for SSH (cloud-init installing Docker + nginx)...');
     await waitForSSH(serverIp, 180000);
     log('provision', 'Server ready');
+
+    // Save state immediately so we track the server even if deploy fails later
+    saveDeployment(name, {
+      serverId,
+      serverIp,
+      domain: `${name}.canopy.sh`,
+      framework,
+      lastDeploy: '',
+      createdAt: new Date().toISOString(),
+    });
+    log('state', 'Server tracked in state (pre-deploy)');
   }
 
   // 4. Generate Dockerfile if not present
@@ -91,13 +120,21 @@ export async function deploy({ projectPath, name, env, log = noop }: DeployOpts)
 
   // 5. Upload project
   const remotePath = `/home/canopy/${name}`;
-  log('upload', 'Cleaning remote directory...');
-  await sshExec(serverIp, `rm -rf ${remotePath}`);
+  const isRedeploy = !!deployment;
 
-  log('upload', 'Uploading project (tar + scp)...');
-  const uploadStart = Date.now();
-  await sshUpload(serverIp, absPath, remotePath);
-  log('upload', `Upload complete (${((Date.now() - uploadStart) / 1000).toFixed(1)}s)`);
+  if (isRedeploy) {
+    log('upload', 'Uploading changes (rsync)...');
+    const uploadStart = Date.now();
+    await rsyncUpload(serverIp, absPath, remotePath);
+    log('upload', `Upload complete (${((Date.now() - uploadStart) / 1000).toFixed(1)}s)`);
+  } else {
+    log('upload', 'Cleaning remote directory...');
+    await sshExec(serverIp, `rm -rf ${remotePath}`);
+    log('upload', 'Uploading project (tar + scp)...');
+    const uploadStart = Date.now();
+    await sshUpload(serverIp, absPath, remotePath);
+    log('upload', `Upload complete (${((Date.now() - uploadStart) / 1000).toFixed(1)}s)`);
+  }
 
   if (generatedDockerfile) {
     await sshExec(serverIp, `cat > ${remotePath}/Dockerfile << 'DOCKERFILE_EOF'\n${generatedDockerfile}DOCKERFILE_EOF`);
@@ -122,7 +159,7 @@ export async function deploy({ projectPath, name, env, log = noop }: DeployOpts)
 
   const port = getContainerPort(framework);
   const envFlags = env
-    ? Object.entries(env).map(([k, v]) => `-e ${k}="${v}"`).join(' ')
+    ? Object.entries(env).map(([k, v]) => `-e ${shellEscape(k)}="${shellEscape(v)}"`).join(' ')
     : '';
 
   log('container', `Starting container (port ${port})...`);
@@ -154,14 +191,14 @@ export async function deploy({ projectPath, name, env, log = noop }: DeployOpts)
   await sshExec(serverIp, `nginx -t && systemctl reload nginx`);
   log('nginx', 'Nginx configured');
 
-  // 9. Save state
+  // 9. Update state with deploy timestamp
   saveDeployment(name, {
     serverId,
     serverIp,
     domain: `${name}.canopy.sh`,
     framework,
     lastDeploy: new Date().toISOString(),
-    createdAt: deployment?.createdAt || new Date().toISOString(),
+    createdAt: getDeployment(name)?.createdAt || new Date().toISOString(),
   });
   log('state', 'Deployment state saved');
 

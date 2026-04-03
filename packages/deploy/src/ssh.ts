@@ -47,6 +47,8 @@ function generateSSHKeyPair(): SSHKey {
  */
 export function ensureSSHKey(): SSHKey {
   if (fs.existsSync(PRIVATE_KEY_PATH) && fs.existsSync(PUBLIC_KEY_PATH)) {
+    // Ensure correct permissions
+    fs.chmodSync(PRIVATE_KEY_PATH, 0o600);
     return {
       publicKey: fs.readFileSync(PUBLIC_KEY_PATH, 'utf-8').trim(),
       privateKey: fs.readFileSync(PRIVATE_KEY_PATH, 'utf-8'),
@@ -94,6 +96,25 @@ export async function sshExec(ip: string, command: string): Promise<ExecResult> 
       });
     });
   });
+}
+
+/**
+ * Upload a directory using rsync (fast for redeploys — only transfers changed files).
+ * Falls back to tar+scp if rsync is not available.
+ */
+export async function rsyncUpload(ip: string, localPath: string, remotePath: string): Promise<void> {
+  const excludes = ['node_modules', '.git', '.next', 'dist', 'build', '.cache', '.env', '.env.local', '.env.production']
+    .map(e => `--exclude='${e}'`).join(' ');
+
+  try {
+    execSync(
+      `rsync -azq --delete ${excludes} -e "ssh -i '${PRIVATE_KEY_PATH}' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" "${localPath}/" root@${ip}:${remotePath}/`,
+      { stdio: 'pipe' }
+    );
+  } catch {
+    // rsync not available, fall back to tar+scp
+    await sshUpload(ip, localPath, remotePath);
+  }
 }
 
 /**
