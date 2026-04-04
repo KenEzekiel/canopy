@@ -145,14 +145,21 @@ export function removeServer(serverId: string): void {
 
 /**
  * Find a server with capacity for another app.
+ * Prefers the server with the most remaining capacity.
  * Returns null if no server available.
  */
 export function findAvailableServer(maxAppsPerServer: number = 5): ServerInfo | null {
   const state = loadState();
+  let best: ServerInfo | null = null;
+  let bestCapacity = 0;
   for (const srv of Object.values(state.servers)) {
-    if (srv.apps.length < maxAppsPerServer) return srv;
+    const remaining = maxAppsPerServer - srv.apps.length;
+    if (remaining > bestCapacity) {
+      best = srv;
+      bestCapacity = remaining;
+    }
   }
-  return null;
+  return best;
 }
 
 /**

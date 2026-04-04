@@ -86,20 +86,35 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   let isRedeploy = false;
 
   if (existingApp) {
-    // Redeploy to same server + same port
+    // Redeploy to same server + same port — verify server is reachable
     serverIp = existingApp.serverIp;
     serverId = existingApp.serverId;
     appPort = existingApp.port;
     isRedeploy = true;
     log('state', `Redeploying ${name} to ${serverIp}:${appPort}`);
+    try {
+      await sshExec(serverIp, 'echo ok');
+    } catch {
+      throw new Error(`Server ${serverIp} is unreachable. It may have been deleted. Run \`canopy destroy ${name}\` to clean up state, then redeploy.`);
+    }
   } else if (!newServer) {
     // Try to find an existing server with capacity
     const available = findAvailableServer();
     if (available) {
-      serverIp = available.ip;
-      serverId = `srv-${available.id}`;
-      appPort = getNextPort(serverId);
-      log('state', `Adding ${name} to existing server ${serverIp} (port ${appPort})`);
+      // Verify the server is actually reachable before assigning
+      try {
+        await sshExec(available.ip, 'echo ok');
+        serverIp = available.ip;
+        serverId = `srv-${available.id}`;
+        appPort = getNextPort(serverId);
+        log('state', `Adding ${name} to existing server ${serverIp} (port ${appPort})`);
+      } catch {
+        log('state', `Existing server ${available.ip} unreachable, provisioning new...`);
+        const result = await provisionNewServer(name, log, region);
+        serverIp = result.serverIp;
+        serverId = result.serverId;
+        appPort = 3001;
+      }
     } else {
       // No server available — provision new
       const result = await provisionNewServer(name, log, region);
@@ -220,8 +235,9 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   // 9. SSL via certbot (unless --no-ssl)
   if (!noSsl) {
     log('ssl', `Setting up SSL for ${appDomain}...`);
+    const sslEmail = process.env.CANOPY_SSL_EMAIL || `admin@${domain}`;
     const sslResult = await sshExec(serverIp,
-      `certbot --nginx -d ${appDomain} --non-interactive --agree-tos -m admin@${domain} 2>&1`
+      `certbot --nginx -d ${appDomain} --non-interactive --agree-tos -m ${sslEmail} 2>&1`
     );
     if (sslResult.exitCode !== 0) {
       log('ssl', `SSL setup failed (non-blocking): ${sslResult.stdout.slice(-200)}`);

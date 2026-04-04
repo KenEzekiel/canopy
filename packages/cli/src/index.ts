@@ -218,27 +218,44 @@ program.command('list').description('List all deployments').option('--json', 'Ou
 program.command('destroy <name>').description('Remove an app (deletes server if last app)')
   .action(async (name: string) => {
     try {
+      validateAppName(name);
       const app = getDeployment(name);
       if (!app) { console.log(`  ${c.yellow}!${c.reset} No deployment found for "${name}"`); process.exit(1); }
-      validateAppName(name);
 
-      // Stop container on server
-      console.log(`  Stopping container ${name}...`);
-      try {
-        await sshExec(app.serverIp, `docker stop ${name} 2>/dev/null; docker rm ${name} 2>/dev/null`);
-        await sshExec(app.serverIp, `rm -f /etc/nginx/sites-enabled/${name} /etc/nginx/sites-available/${name}`);
-        await sshExec(app.serverIp, `nginx -t && systemctl reload nginx 2>/dev/null`);
-        await sshExec(app.serverIp, `rm -rf /home/canopy/${name}`);
-      } catch { /* server might be unreachable, continue with state cleanup */ }
-
-      // Check if this is the last app on the server
       const srvInfo = getServerForApp(name);
-      removeDeployment(name);
+      const isLastApp = srvInfo ? srvInfo.server.apps.length <= 1 : false;
 
-      if (srvInfo && srvInfo.server.apps.length <= 1) {
-        // Last app — delete the server
-        console.log(`  Last app on server — deleting server ${srvInfo.server.id}...`);
-        await deleteServer(srvInfo.server.id);
+      // Step 1: If last app, delete Hetzner server FIRST (before touching local state)
+      if (isLastApp && srvInfo) {
+        console.log(`  Last app on server — deleting server ${srvInfo.server.id} (${srvInfo.server.ip})...`);
+        try {
+          await deleteServer(srvInfo.server.id);
+        } catch (err: any) {
+          // 404 = server already gone on Hetzner, safe to clean up local state
+          if (err.message?.includes('404')) {
+            console.log(`  ${c.dim}Server already deleted on Hetzner, cleaning up local state...${c.reset}`);
+          } else {
+            console.error(`  ${c.red}✗${c.reset} Failed to delete server on Hetzner: ${err.message}`);
+            console.error(`  ${c.dim}State NOT modified. Server may still be running. Check Hetzner console.${c.reset}`);
+            process.exit(1);
+          }
+        }
+      }
+
+      // Step 2: Clean up on server (best-effort, server might be gone already)
+      if (!isLastApp) {
+        console.log(`  Stopping container ${name}...`);
+        try {
+          await sshExec(app.serverIp, `docker stop ${name} 2>/dev/null; docker rm ${name} 2>/dev/null`);
+          await sshExec(app.serverIp, `rm -f /etc/nginx/sites-enabled/${name} /etc/nginx/sites-available/${name}`);
+          await sshExec(app.serverIp, `nginx -t && systemctl reload nginx 2>/dev/null`);
+          await sshExec(app.serverIp, `rm -rf /home/canopy/${name}`);
+        } catch { /* server unreachable — acceptable if we're removing the app from state */ }
+      }
+
+      // Step 3: Update local state AFTER remote operations succeed
+      removeDeployment(name);
+      if (isLastApp && srvInfo) {
         removeServer(srvInfo.serverId);
         console.log(`  ${c.green}✓${c.reset} Destroyed ${name} and server ${srvInfo.server.ip}`);
       } else {

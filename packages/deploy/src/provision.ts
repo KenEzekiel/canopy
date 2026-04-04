@@ -69,6 +69,7 @@ interface CreateServerOpts {
   name: string;
   sshKeyId: number;
   location?: string;
+  serverType?: string;
 }
 
 interface CreateServerResult {
@@ -76,15 +77,19 @@ interface CreateServerResult {
   ip: string;
 }
 
+// MVP defaults — configurable later
+const DEFAULT_LOCATION = 'hel1';
+const DEFAULT_SERVER_TYPE = 'cx23';
+
 /**
  * Create a cx23 server on Hetzner.
  */
-export async function createServer({ name, sshKeyId, location = 'hel1' }: CreateServerOpts): Promise<CreateServerResult> {
+export async function createServer({ name, sshKeyId, location = DEFAULT_LOCATION, serverType = DEFAULT_SERVER_TYPE }: CreateServerOpts): Promise<CreateServerResult> {
   const { server } = await hetznerFetch<{ server: HetznerServer }>('/servers', {
     method: 'POST',
     body: JSON.stringify({
       name: `canopy-${name}`,
-      server_type: 'cx23',
+      server_type: serverType,
       image: 'ubuntu-24.04',
       ssh_keys: [sshKeyId],
       location,

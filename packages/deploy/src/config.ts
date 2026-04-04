@@ -10,6 +10,7 @@ export interface CanopyConfig {
 
 export const CANOPY_DIR: string = path.join(os.homedir(), '.canopy');
 const CONFIG_PATH: string = path.join(CANOPY_DIR, 'config.json');
+const CONFIG_TMP_PATH: string = path.join(CANOPY_DIR, 'config.json.tmp');
 
 function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -26,7 +27,9 @@ export function loadConfig(): CanopyConfig {
 
 export function saveConfig(config: CanopyConfig): void {
   ensureDir(CANOPY_DIR);
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
+  const data = JSON.stringify(config, null, 2) + '\n';
+  fs.writeFileSync(CONFIG_TMP_PATH, data);
+  fs.renameSync(CONFIG_TMP_PATH, CONFIG_PATH);
 }
 
 /**
