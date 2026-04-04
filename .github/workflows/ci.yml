@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Test scanner
+        run: |
+          node -e "
+            const { scan } = require('./packages/scanner/dist/index');
+            const result = scan('.');
+            console.log('Score:', result.score, '| Files:', result.meta.filesScanned);
+            if (typeof result.score !== 'number') process.exit(1);
+          "
+
+      - name: Test CLI loads
+        run: node packages/cli/dist/index.js --help

@@ -1,20 +1,33 @@
 {
   "name": "canopy",
   "version": "1.0.0",
+  "description": "Security scanner + deploy tool for vibecoded apps. Scan for vulnerabilities, deploy to your own VPS with one command.",
   "private": true,
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "build": "npm run build -w packages/scanner && npm run build -w packages/deploy && npm run build -w packages/cli",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "clean": "rm -rf packages/*/dist"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": [
+    "security",
+    "scanner",
+    "deploy",
+    "vps",
+    "hetzner",
+    "docker",
+    "cli",
+    "vibecoding"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dataretech/canopy.git"
+  },
+  "author": "Canopy Contributors",
+  "license": "MIT",
   "devDependencies": {
-    "@types/node": "^25.5.2",
-    "typescript": "^5.9.3"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   }
 }
