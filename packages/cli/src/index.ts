@@ -83,7 +83,7 @@ function printMeta(meta: ScanMeta, summary: ScanSummary): void {
 const PHASE_ICONS: Record<string, string> = {
   scan: '🔍', detect: '🔎', state: '💾', provision: '☁️ ',
   dockerfile: '🐳', upload: '📦', build: '🔨', container: '▶️ ',
-  nginx: '🌐', ssl: '🔒', default: '  ',
+  nginx: '🌐', ssl: '🔒', env: '🔑', vpn: '🛡️ ', default: '  ',
 };
 
 program.name('canopy').description('Security scanner & deploy tool for vibecoded apps').version('1.0.0');
@@ -120,9 +120,10 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
   .option('--region <region>', 'Server region (fsn1, nbg1, hel1, ash, hil, sin)', 'hel1')
   .option('--env-file <path>', 'Path to .env file to load')
   .option('--no-ssl', 'Skip SSL/certbot setup')
+  .option('--private', 'Make app VPN-only (WireGuard)')
   .action(async (targetPath: string | undefined, opts: {
     name: string; json?: boolean; verbose?: boolean; force?: boolean;
-    new?: boolean; region?: string; envFile?: string; ssl?: boolean;
+    new?: boolean; region?: string; envFile?: string; ssl?: boolean; private?: boolean;
   }) => {
     const projectPath = path.resolve(targetPath || process.cwd());
 
@@ -150,7 +151,7 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
       const result = await deploy({
         projectPath, name: opts.name, env: envVars,
         force: opts.force, newServer: opts.new, region: opts.region,
-        noSsl: opts.ssl === false, log: verboseLog,
+        noSsl: opts.ssl === false, private: opts.private, log: verboseLog,
       });
       if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
       if (result.status === 'blocked') { console.log(`  ${c.red}✗${c.reset} Deploy blocked: ${result.reason}`); if (result.scan) { printScore(result.scan.score); printFindings(result.scan.findings); } process.exit(1); }
@@ -161,6 +162,20 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
       console.log(`  ${c.dim}IP:${c.reset}        ${result.ip}:${result.port}`);
       console.log(`  ${c.dim}Framework:${c.reset} ${result.framework}`);
       console.log(`  ${c.dim}Score:${c.reset}     ${result.scan?.score}/100`);
+      if (result.vpnConfig) {
+        console.log();
+        console.log(`  ${c.bold}🔒 VPN Config${c.reset} (import into WireGuard app):`);
+        console.log(`  ${c.dim}${'─'.repeat(50)}${c.reset}`);
+        for (const line of result.vpnConfig.split('\n')) {
+          console.log(`  ${c.dim}${line}${c.reset}`);
+        }
+        console.log(`  ${c.dim}${'─'.repeat(50)}${c.reset}`);
+        console.log(`  ${c.yellow}This app is VPN-only.${c.reset}`);
+        console.log(`  ${c.dim}1. Import config into WireGuard app${c.reset}`);
+        console.log(`  ${c.dim}2. Activate the tunnel${c.reset}`);
+        console.log(`  ${c.dim}3. Access via: ${result.url}${c.reset}`);
+        console.log(`  ${c.dim}Note: If using Chrome, disable "Use secure DNS" in chrome://settings/security${c.reset}`);
+      }
       console.log();
     } catch (err: any) { console.error(`  ${c.red}Error:${c.reset} ${err.message}`); process.exit(2); }
   });
@@ -209,7 +224,7 @@ program.command('list').description('List all deployments').option('--json', 'Ou
       console.log(`  ${c.dim}${srvId}${c.reset}  ${c.dim}${ip} (${loc})${c.reset}  ${c.dim}${apps.length} app(s)${c.reset}`);
       for (const name of apps) {
         const app = state.apps[name];
-        console.log(`    ${c.bold}${name}${c.reset}  ${c.dim}:${app.port}  ${app.framework}  ${app.lastDeploy || 'pending'}${c.reset}`);
+        console.log(`    ${c.bold}${name}${c.reset}  ${c.dim}:${app.port}  ${app.framework}  ${app.private ? '🔒 private' : 'public'}  ${app.lastDeploy || 'pending'}${c.reset}`);
       }
       console.log();
     }

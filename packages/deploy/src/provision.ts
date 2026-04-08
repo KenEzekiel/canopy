@@ -4,12 +4,17 @@ const API_BASE = 'https://api.hetzner.cloud/v1';
 
 const CLOUD_INIT = `#!/bin/bash
 apt-get update
-apt-get install -y docker.io docker-compose nginx certbot python3-certbot-nginx
+apt-get install -y docker.io docker-compose nginx certbot python3-certbot-nginx curl
 systemctl enable docker
 systemctl start docker
 systemctl enable nginx
 systemctl start nginx
 mkdir -p /home/canopy
+# Install Docker BuildKit (buildx) for secret mounts
+BUILDX_VERSION=v0.19.3
+mkdir -p /usr/libexec/docker/cli-plugins
+curl -fsSL https://github.com/docker/buildx/releases/download/\${BUILDX_VERSION}/buildx-\${BUILDX_VERSION}.linux-amd64 -o /usr/libexec/docker/cli-plugins/docker-buildx
+chmod +x /usr/libexec/docker/cli-plugins/docker-buildx
 `;
 
 interface HetznerSSHKey {

@@ -10,6 +10,8 @@ export interface AppInfo {
   framework: string;
   lastDeploy: string;
   createdAt: string;
+  private?: boolean;
+  vpnClientIp?: string;
 }
 
 export interface ServerInfo {
@@ -18,6 +20,8 @@ export interface ServerInfo {
   location: string;
   createdAt: string;
   apps: string[];
+  vpnSetup?: boolean;
+  vpnNextClientIndex?: number;
 }
 
 export interface CanopyState {

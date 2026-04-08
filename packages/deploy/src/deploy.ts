@@ -5,11 +5,12 @@ import { detectFramework } from './detect';
 import { generateDockerfile, getContainerPort } from './dockerfile';
 import {
   getDeployment, saveDeployment, findAvailableServer,
-  getNextPort, saveServer, type AppInfo,
+  getNextPort, saveServer, getServerInfo, type AppInfo,
 } from './state';
 import { ensureSSHKey, sshExec, sshUpload, rsyncUpload, waitForSSH } from './ssh';
 import { uploadSSHKey, createServer } from './provision';
 import { getDomain } from './config';
+import { setupVPN, addVPNClient, restrictToVPN } from './vpn';
 import { validateAppName } from './validation';
 import type { Framework } from './detect';
 
@@ -40,6 +41,7 @@ export interface DeployOpts {
   newServer?: boolean;
   region?: string;
   noSsl?: boolean;
+  private?: boolean;
   log?: (phase: string, message: string) => void;
 }
 
@@ -52,9 +54,10 @@ export interface DeployResult {
   port?: number;
   framework?: Framework;
   error?: string;
+  vpnConfig?: string;
 }
 
-export async function deploy({ projectPath, name, env, force = false, newServer = false, region, noSsl = false, log = noop }: DeployOpts): Promise<DeployResult> {
+export async function deploy({ projectPath, name, env, force = false, newServer = false, region, noSsl = false, private: isPrivate = false, log = noop }: DeployOpts): Promise<DeployResult> {
   validateAppName(name);
   if (env) validateEnvVars(env);
   const absPath = path.resolve(projectPath);
@@ -174,10 +177,33 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
     log('dockerfile', 'Dockerfile written to server');
   }
 
-  // 6. Build Docker image
+  // 5b. Write env vars as a BuildKit secret file (never touches Docker layers)
+  const hasEnvVars = env && Object.keys(env).length > 0;
+  const envSecretPath = `/tmp/canopy-${name}-build.env`;
+  if (hasEnvVars) {
+    const envContent = Object.entries(env!).map(([k, v]) => `${k}=${v}`).join('\n');
+    await sshExec(serverIp, `cat > ${envSecretPath} << 'ENVFILE_EOF'\n${envContent}\nENVFILE_EOF`);
+    await sshExec(serverIp, `chmod 600 ${envSecretPath}`);
+    log('env', 'Env secret file created for build');
+  }
+
+  // 6. Build Docker image (with BuildKit secret mount if env vars present)
   log('build', 'Building Docker image...');
   const buildStart = Date.now();
-  const buildResult = await sshExec(serverIp, `cd ${remotePath} && docker build -t ${name} .`);
+  const secretFlag = hasEnvVars ? `--secret id=env,src=${envSecretPath}` : '';
+  // Also pass env vars as --build-arg for Dockerfiles that use ARG (e.g. VITE_*, NEXT_PUBLIC_*)
+  const buildArgFlags = hasEnvVars
+    ? Object.entries(env!).map(([k, v]) => `--build-arg ${k}="${v}"`).join(' ')
+    : '';
+  const buildResult = await sshExec(serverIp,
+    `cd ${remotePath} && DOCKER_BUILDKIT=1 docker build ${secretFlag} ${buildArgFlags} -t ${name} .`
+  );
+
+  // Clean up secret file immediately after build
+  if (hasEnvVars) {
+    await sshExec(serverIp, `rm -f ${envSecretPath}`);
+    log('env', 'Build secret file cleaned up');
+  }
   const buildTime = ((Date.now() - buildStart) / 1000).toFixed(1);
 
   if (buildResult.exitCode !== 0) {
@@ -215,20 +241,35 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
 
   // 8. Configure nginx for this app
   log('nginx', 'Configuring reverse proxy...');
-  const nginxConf = `server {
-    listen 80;
-    server_name ${appDomain};
-    location / {
-        proxy_pass http://localhost:${appPort};
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-    }
-}`;
+  const nginxConf = [
+    'server {',
+    '    listen 80;',
+    `    server_name ${appDomain};`,
+    '    location / {',
+    `        proxy_pass http://localhost:${appPort};`,
+    '        proxy_set_header Host $host;',
+    '        proxy_set_header X-Real-IP $remote_addr;',
+    '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+    '        proxy_set_header X-Forwarded-Proto $scheme;',
+    '    }',
+    '}',
+  ].join('\n');
   await sshExec(serverIp, `mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled`);
   await sshExec(serverIp, `cat > /etc/nginx/sites-available/${name} << 'NGINX_EOF'\n${nginxConf}\nNGINX_EOF`);
   await sshExec(serverIp, `ln -sf /etc/nginx/sites-available/${name} /etc/nginx/sites-enabled/`);
+
+  // Ensure a default catch-all exists (drops unmatched requests instead of falling through)
+  await sshExec(serverIp, `test -f /etc/nginx/sites-available/00-default || cat > /etc/nginx/sites-available/00-default << 'NGINX_EOF'
+server {
+    listen 80 default_server;
+    listen 443 default_server ssl;
+    server_name _;
+    ssl_reject_handshake on;
+    return 444;
+}
+NGINX_EOF`);
+  await sshExec(serverIp, `ln -sf /etc/nginx/sites-available/00-default /etc/nginx/sites-enabled/`);
+
   await sshExec(serverIp, `nginx -t && systemctl reload nginx`);
   log('nginx', 'Nginx configured');
 
@@ -248,7 +289,45 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
     log('ssl', 'SSL skipped (--no-ssl)');
   }
 
-  // 10. Update state
+  // 10. VPN setup (if --private)
+  let vpnConfig: string | undefined;
+  if (isPrivate) {
+    log('vpn', 'Setting up WireGuard VPN...');
+
+    // Check if VPN is already set up on this server
+    const srvState = getServerInfo(serverId);
+    if (!srvState?.vpnSetup) {
+      log('vpn', 'Installing WireGuard on server...');
+      await setupVPN(serverIp);
+      // Update server state
+      if (srvState) {
+        srvState.vpnSetup = true;
+        srvState.vpnNextClientIndex = 2;
+        saveServer(serverId, srvState);
+      }
+      log('vpn', 'WireGuard installed');
+    }
+
+    // Add VPN client for this app
+    const clientIndex = srvState?.vpnNextClientIndex || 2;
+    log('vpn', `Adding VPN client (10.0.0.${clientIndex})...`);
+    const vpnResult = await addVPNClient(serverIp, name, clientIndex);
+    vpnConfig = vpnResult.config;
+
+    // Update server state with next client index
+    const updatedSrv = getServerInfo(serverId);
+    if (updatedSrv) {
+      updatedSrv.vpnNextClientIndex = clientIndex + 1;
+      saveServer(serverId, updatedSrv);
+    }
+
+    // Restrict nginx to VPN interface only
+    log('vpn', 'Restricting app to VPN access only...');
+    await restrictToVPN(serverIp, name, appPort);
+    log('vpn', 'App is now VPN-only');
+  }
+
+  // 11. Update state
   saveDeployment(name, {
     serverId,
     serverIp,
@@ -257,6 +336,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
     framework,
     lastDeploy: new Date().toISOString(),
     createdAt: getDeployment(name)?.createdAt || new Date().toISOString(),
+    private: isPrivate,
   });
   log('state', 'Deployment state saved');
 
@@ -268,6 +348,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
     port: appPort,
     framework,
     scan: scanResult,
+    vpnConfig,
   };
 }
 

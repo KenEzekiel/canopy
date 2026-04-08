@@ -4,16 +4,12 @@ interface PMCommands {
   install: string;
   installProd: string;
   build: string;
-  copy: string;
 }
 
-/**
- * Get install + build commands for a package manager.
- */
 function pmCommands(pm: PackageManager): PMCommands {
-  if (pm === 'pnpm') return { install: 'corepack enable && pnpm install --frozen-lockfile', installProd: 'corepack enable && pnpm install --frozen-lockfile --prod', build: 'pnpm run build', copy: 'COPY pnpm-lock.yaml ./' };
-  if (pm === 'yarn') return { install: 'yarn install --frozen-lockfile', installProd: 'yarn install --frozen-lockfile --production', build: 'yarn build', copy: 'COPY yarn.lock ./' };
-  return { install: 'npm ci', installProd: 'npm ci --production', build: 'npm run build', copy: '' };
+  if (pm === 'pnpm') return { install: 'corepack enable && pnpm install --frozen-lockfile', installProd: 'corepack enable && pnpm install --frozen-lockfile --prod', build: 'pnpm run build' };
+  if (pm === 'yarn') return { install: 'yarn install --frozen-lockfile', installProd: 'yarn install --frozen-lockfile --production', build: 'yarn build' };
+  return { install: 'npm ci', installProd: 'npm ci --production', build: 'npm run build' };
 }
 
 function lockfileCopy(pm: PackageManager): string {
@@ -22,16 +18,29 @@ function lockfileCopy(pm: PackageManager): string {
   return '';
 }
 
+/**
+ * Build command that mounts the env secret and copies it to .env for the build step.
+ * The secret is never written to a Docker layer — it only exists during the RUN command.
+ * Uses BuildKit --mount=type=secret.
+ */
+function buildWithSecrets(buildCmd: string): string {
+  return `RUN --mount=type=secret,id=env,target=/run/secrets/env \
+    if [ -f /run/secrets/env ]; then cp /run/secrets/env .env; fi && \
+    ${buildCmd} && \
+    rm -f .env`;
+}
+
 const TEMPLATES: Record<Framework, (projectPath: string) => string> = {
   nextjs: (projectPath: string): string => {
     const pm = detectPackageManager(projectPath);
     const c = pmCommands(pm);
-    return `FROM node:22-alpine AS builder
+    return `# syntax=docker/dockerfile:1
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package.json ./
 ${lockfileCopy(pm)}RUN ${c.install}
 COPY . .
-RUN ${c.build}
+${buildWithSecrets(c.build)}
 
 FROM node:22-alpine AS runner
 WORKDIR /app
@@ -48,12 +57,13 @@ CMD ["npx", "next", "start"]
   'vite-react': (projectPath: string): string => {
     const pm = detectPackageManager(projectPath);
     const c = pmCommands(pm);
-    return `FROM node:22-alpine AS builder
+    return `# syntax=docker/dockerfile:1
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package.json ./
 ${lockfileCopy(pm)}RUN ${c.install}
 COPY . .
-RUN ${c.build}
+${buildWithSecrets(c.build)}
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
@@ -84,12 +94,13 @@ EXPOSE 80
   'generic-node': (projectPath: string): string => {
     const pm = detectPackageManager(projectPath);
     const c = pmCommands(pm);
-    return `FROM node:22-alpine
+    return `# syntax=docker/dockerfile:1
+FROM node:22-alpine
 WORKDIR /app
 COPY package.json ./
 ${lockfileCopy(pm)}RUN ${c.install}
 COPY . .
-RUN ${c.build}
+${buildWithSecrets(c.build)}
 EXPOSE 3000
 CMD ["${pm}", "start"]
 `;
