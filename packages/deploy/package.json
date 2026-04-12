@@ -11,7 +11,7 @@
     "@canopy/scanner": "1.0.0",
     "ssh2": "^1.16.0"
   },
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "@types/ssh2": "^1.15.5"
   }

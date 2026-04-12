@@ -107,6 +107,26 @@ canopy deploy ./backend --name app2      # port 3002 (same server)
 canopy deploy ./admin --name app3 --new  # force new server
 ```
 
+## Private deployments (VPN)
+
+Deploy apps that are only accessible via WireGuard VPN:
+
+```bash
+canopy deploy ./app --name internal-tool --private
+```
+
+This:
+1. Sets up WireGuard on the server (first time only)
+2. Generates a client config file
+3. Configures nginx to only accept VPN connections
+4. Sets up DNS resolution via dnsmasq
+
+Import the generated `.conf` file into any WireGuard client to access your private app.
+
+Without VPN: `403 Forbidden`. With VPN: full HTTPS access with valid SSL cert.
+
+Note: Chrome users need to disable "Use secure DNS" (`chrome://settings/security`) for VPN DNS to work.
+
 ## Framework detection
 
 | Framework | Detection | Dockerfile |

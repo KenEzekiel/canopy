@@ -13,5 +13,5 @@
     "@canopy/scanner": "1.0.0",
     "@canopy/deploy": "1.0.0"
   },
-  "license": "ISC"
+  "license": "MIT"
 }

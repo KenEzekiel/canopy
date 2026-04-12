@@ -8,5 +8,5 @@
     "build": "tsc"
   },
   "keywords": ["security", "scanner"],
-  "license": "ISC"
+  "license": "MIT"
 }
