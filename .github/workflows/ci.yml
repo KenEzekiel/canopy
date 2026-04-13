@@ -6,12 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20, 22]
+        node-version: [20, 22, 24]
 
     steps:
       - uses: actions/checkout@v4
@@ -38,3 +41,6 @@ jobs:
 
       - name: Test CLI loads
         run: node packages/cli/dist/index.js --help
+
+      - name: Test CLI version
+        run: node packages/cli/dist/index.js --version
