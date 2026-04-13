@@ -1,6 +1,11 @@
 import { sshExec } from './ssh';
 import { getDomain } from './config';
 
+/** Strip all characters except alphanumeric, dash, and underscore. */
+function sanitizeName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
 /**
  * Install WireGuard on a server and configure the server-side interface.
  */
@@ -30,8 +35,9 @@ PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING 
   await sshExec(ip, `cat > /etc/wireguard/wg0.conf << 'WG_EOF'\n${serverConf}WG_EOF`);
   await sshExec(ip, 'chmod 600 /etc/wireguard/wg0.conf');
 
-  // Enable IP forwarding and start WireGuard
-  await sshExec(ip, 'echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf && sysctl -p');
+  // Enable IP forwarding (idempotent — only append if not already set)
+  await sshExec(ip, 'grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf');
+  await sshExec(ip, 'sysctl -p');
   await sshExec(ip, 'systemctl enable wg-quick@wg0 && systemctl start wg-quick@wg0');
 
   // Install dnsmasq for VPN DNS resolution (resolves app domains to VPN IP)
@@ -58,11 +64,15 @@ export async function addVPNClient(
   clientName: string,
   clientIndex: number = 2,
 ): Promise<{ config: string; clientIp: string }> {
-  // Generate client keys on server (single pipeline, no shell interpolation)
-  await sshExec(ip, 'wg genkey > /tmp/canopy-client.key && cat /tmp/canopy-client.key | wg pubkey > /tmp/canopy-client.pub');
-  const { stdout: clientPrivKey } = await sshExec(ip, 'cat /tmp/canopy-client.key');
-  const { stdout: clientPubKey } = await sshExec(ip, 'cat /tmp/canopy-client.pub');
-  await sshExec(ip, 'rm -f /tmp/canopy-client.key /tmp/canopy-client.pub');
+  const safeClientName = sanitizeName(clientName);
+
+  // Generate client keys in a secure temp directory with restricted permissions
+  const { stdout: tmpDir } = await sshExec(ip, 'mktemp -d');
+  const secureTmp = tmpDir.trim();
+  await sshExec(ip, `chmod 700 "${secureTmp}" && wg genkey > "${secureTmp}/client.key" && chmod 600 "${secureTmp}/client.key" && cat "${secureTmp}/client.key" | wg pubkey > "${secureTmp}/client.pub"`);
+  const { stdout: clientPrivKey } = await sshExec(ip, `cat "${secureTmp}/client.key"`);
+  const { stdout: clientPubKey } = await sshExec(ip, `cat "${secureTmp}/client.pub"`);
+  await sshExec(ip, `rm -rf "${secureTmp}"`);
 
   const clientIp = `10.0.0.${clientIndex}`;
 
@@ -72,12 +82,12 @@ export async function addVPNClient(
   // Add peer to server config
   const peerBlock = `
 [Peer]
-# ${clientName}
+# ${safeClientName}
 PublicKey = ${clientPubKey.trim()}
 AllowedIPs = ${clientIp}/32
 `;
   await sshExec(ip, `echo '${peerBlock}' >> /etc/wireguard/wg0.conf`);
-  await sshExec(ip, 'wg syncconf wg0 <(wg-quick strip wg0) 2>/dev/null || systemctl restart wg-quick@wg0');
+  await sshExec(ip, 'bash -c \'wg syncconf wg0 <(wg-quick strip wg0)\' 2>/dev/null || systemctl restart wg-quick@wg0');
 
   // Build client config
   const config = `[Interface]
@@ -100,32 +110,18 @@ PersistentKeepalive = 25
  * This makes the app only accessible via VPN.
  */
 export async function restrictToVPN(ip: string, appName: string, appPort: number): Promise<void> {
-  const domain = `${appName}.${getDomain()}`;
+  const safeAppName = sanitizeName(appName);
+  const domain = `${safeAppName}.${getDomain()}`;
 
-  // Register this domain in dnsmasq to resolve to VPN IP
-  await sshExec(ip, `echo "address=/${domain}/10.0.0.1" >> /etc/dnsmasq.d/canopy-vpn.conf`);
+  // Register this domain in dnsmasq (idempotent — only add if not already present)
+  const dnsEntry = `address=/${domain}/10.0.0.1`;
+  await sshExec(ip, `grep -qF "${dnsEntry}" /etc/dnsmasq.d/canopy-vpn.conf || echo "${dnsEntry}" >> /etc/dnsmasq.d/canopy-vpn.conf`);
   await sshExec(ip, 'systemctl restart dnsmasq');
 
   // Check if SSL certs exist for this domain
   const { exitCode: certExists } = await sshExec(ip,
     `test -f /etc/letsencrypt/live/${domain}/fullchain.pem`
   );
-
-  // Strategy: nginx listens normally on all interfaces with SSL.
-  // We use iptables to only allow port 443/80 traffic for this domain
-  // from the wg0 interface (VPN) and drop public traffic.
-  // This works because WireGuard clients route 10.0.0.0/24 through the tunnel,
-  // and we add a PREROUTING rule to mark VPN traffic.
-
-  // Actually, the simplest reliable approach:
-  // 1. Nginx listens on all interfaces (SSL works, domain works)
-  // 2. Use nginx's $remote_addr + geo module to check if client is on VPN
-  // 3. VPN clients connect to 10.0.0.1 (the server's VPN IP) directly
-  // 4. We tell the user to add a /etc/hosts entry OR use the VPN IP
-
-  // For production: nginx allows both VPN subnet (10.0.0.0/24) AND
-  // connections arriving on the wg0 interface. We use realip module
-  // to check the actual source.
 
   const proxyBlock = [
     '    location / {',
@@ -148,9 +144,8 @@ export async function restrictToVPN(ip: string, appName: string, appPort: number
 
   if (certExists === 0) {
     lines.push(
-      '# VPN-only app — accessible via https://10.0.0.1 when connected to VPN',
+      '# VPN-only app — only listens on WireGuard interface',
       'server {',
-      '    listen 443 ssl;',
       '    listen 10.0.0.1:443 ssl;',
       `    server_name ${domain} 10.0.0.1;`,
       `    ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;`,
@@ -162,7 +157,6 @@ export async function restrictToVPN(ip: string, appName: string, appPort: number
       '}',
       '',
       'server {',
-      '    listen 80;',
       '    listen 10.0.0.1:80;',
       `    server_name ${domain} 10.0.0.1;`,
       ...allowBlock,
@@ -172,7 +166,6 @@ export async function restrictToVPN(ip: string, appName: string, appPort: number
   } else {
     lines.push(
       'server {',
-      '    listen 80;',
       '    listen 10.0.0.1:80;',
       `    server_name ${domain} 10.0.0.1;`,
       ...allowBlock,
@@ -182,6 +175,6 @@ export async function restrictToVPN(ip: string, appName: string, appPort: number
   }
 
   const nginxConf = lines.join('\n');
-  await sshExec(ip, `cat > /etc/nginx/sites-available/${appName} << 'NGINX_EOF'\n${nginxConf}\nNGINX_EOF`);
+  await sshExec(ip, `cat > /etc/nginx/sites-available/${safeAppName} << 'NGINX_EOF'\n${nginxConf}\nNGINX_EOF`);
   await sshExec(ip, `nginx -t && systemctl reload nginx`);
 }
