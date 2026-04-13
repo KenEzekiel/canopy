@@ -14,28 +14,63 @@ function validateDomain(domain: string): string {
   return domain;
 }
 
+/** Validate IPv4 address format. */
+function validateIp(ip: string): string {
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+    throw new Error(`Invalid IP address: ${ip}`);
+  }
+  return ip;
+}
+
+/** Validate port number at runtime (guards against type coercion). */
+function validatePort(port: number): number {
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port: ${port}`);
+  }
+  return port;
+}
+
+/** Validate a WireGuard base64 key (44 chars, base64 with trailing =). */
+function validateWgKey(key: string, label: string): string {
+  const trimmed = key.trim();
+  if (!/^[A-Za-z0-9+/]{42,44}=?$/.test(trimmed)) {
+    throw new Error(`Invalid WireGuard key (${label}): got ${trimmed.length} chars`);
+  }
+  return trimmed;
+}
+
 /**
  * Install WireGuard on a server and configure the server-side interface.
  */
 export async function setupVPN(ip: string): Promise<{ serverPublicKey: string }> {
+  validateIp(ip);
+
   // Install WireGuard
   await sshExec(ip, 'apt-get install -y wireguard');
 
   // Generate server keys
-  await sshExec(ip, `
+  const keygenResult = await sshExec(ip, `
     mkdir -p /etc/wireguard
     wg genkey | tee /etc/wireguard/server_private.key | wg pubkey > /etc/wireguard/server_public.key
     chmod 600 /etc/wireguard/server_private.key
   `);
+  if (keygenResult.exitCode !== 0) {
+    throw new Error(`WireGuard key generation failed: ${keygenResult.stderr}`);
+  }
 
-  const { stdout: serverPrivKey } = await sshExec(ip, 'cat /etc/wireguard/server_private.key');
-  const { stdout: serverPubKey } = await sshExec(ip, 'cat /etc/wireguard/server_public.key');
+  const { stdout: serverPrivKey, exitCode: privKeyExit } = await sshExec(ip, 'cat /etc/wireguard/server_private.key');
+  if (privKeyExit !== 0) throw new Error('Failed to read server private key');
+  const { stdout: serverPubKey, exitCode: pubKeyExit } = await sshExec(ip, 'cat /etc/wireguard/server_public.key');
+  if (pubKeyExit !== 0) throw new Error('Failed to read server public key');
+
+  const validPrivKey = validateWgKey(serverPrivKey, 'server private');
+  const validPubKey = validateWgKey(serverPubKey, 'server public');
 
   // Write server config
   const serverConf = `[Interface]
 Address = 10.0.0.1/24
 ListenPort = 51820
-PrivateKey = ${serverPrivKey.trim()}
+PrivateKey = ${validPrivKey}
 PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
 `;
@@ -60,7 +95,7 @@ server=8.8.8.8
 DNS_EOF`);
   await sshExec(ip, 'systemctl enable dnsmasq && systemctl restart dnsmasq');
 
-  return { serverPublicKey: serverPubKey.trim() };
+  return { serverPublicKey: validPubKey };
 }
 
 /**
@@ -72,6 +107,7 @@ export async function addVPNClient(
   clientName: string,
   clientIndex: number = 2,
 ): Promise<{ config: string; clientIp: string }> {
+  validateIp(ip);
   const safeClientName = sanitizeName(clientName);
 
   // Validate clientIndex range (1 = server, 0 = network, 255 = broadcast)
@@ -80,20 +116,30 @@ export async function addVPNClient(
   }
 
   // Generate client keys in a secure temp directory with restricted permissions
-  const { stdout: tmpDir } = await sshExec(ip, 'mktemp -d');
+  const { stdout: tmpDir, exitCode: mkTmpExit } = await sshExec(ip, 'mktemp -d');
+  if (mkTmpExit !== 0) throw new Error('Failed to create temp directory for client keys');
   const secureTmp = tmpDir.trim();
   if (!/^\/tmp\/[a-zA-Z0-9._-]+$/.test(secureTmp)) {
     throw new Error(`Unexpected mktemp output: ${secureTmp}`);
   }
-  await sshExec(ip, `chmod 700 "${secureTmp}" && wg genkey > "${secureTmp}/client.key" && chmod 600 "${secureTmp}/client.key" && cat "${secureTmp}/client.key" | wg pubkey > "${secureTmp}/client.pub"`);
+  const keygenResult = await sshExec(ip, `chmod 700 "${secureTmp}" && wg genkey > "${secureTmp}/client.key" && chmod 600 "${secureTmp}/client.key" && cat "${secureTmp}/client.key" | wg pubkey > "${secureTmp}/client.pub"`);
+  if (keygenResult.exitCode !== 0) {
+    await sshExec(ip, `rm -rf "${secureTmp}"`);
+    throw new Error(`Client key generation failed: ${keygenResult.stderr}`);
+  }
   const { stdout: clientPrivKey } = await sshExec(ip, `cat "${secureTmp}/client.key"`);
   const { stdout: clientPubKey } = await sshExec(ip, `cat "${secureTmp}/client.pub"`);
   await sshExec(ip, `rm -rf "${secureTmp}"`);
 
+  const validClientPrivKey = validateWgKey(clientPrivKey, 'client private');
+  const validClientPubKey = validateWgKey(clientPubKey, 'client public');
+
   const clientIp = `10.0.0.${clientIndex}`;
 
   // Get server public key
-  const { stdout: serverPubKey } = await sshExec(ip, 'cat /etc/wireguard/server_public.key');
+  const { stdout: serverPubKey, exitCode: srvKeyExit } = await sshExec(ip, 'cat /etc/wireguard/server_public.key');
+  if (srvKeyExit !== 0) throw new Error('Failed to read server public key');
+  const validServerPubKey = validateWgKey(serverPubKey, 'server public');
 
   // Add peer to server config (idempotent — skip if peer with same name exists)
   const { exitCode: peerExists } = await sshExec(ip, `grep -q "# ${safeClientName}$" /etc/wireguard/wg0.conf`);
@@ -101,7 +147,7 @@ export async function addVPNClient(
     const peerBlock = `
 [Peer]
 # ${safeClientName}
-PublicKey = ${clientPubKey.trim()}
+PublicKey = ${validClientPubKey}
 AllowedIPs = ${clientIp}/32
 `;
     await sshExec(ip, `cat >> /etc/wireguard/wg0.conf << 'PEER_EOF'\n${peerBlock}PEER_EOF`);
@@ -110,12 +156,12 @@ AllowedIPs = ${clientIp}/32
 
   // Build client config
   const config = `[Interface]
-PrivateKey = ${clientPrivKey.trim()}
+PrivateKey = ${validClientPrivKey}
 Address = ${clientIp}/24
 DNS = 10.0.0.1
 
 [Peer]
-PublicKey = ${serverPubKey.trim()}
+PublicKey = ${validServerPubKey}
 Endpoint = ${ip}:51820
 AllowedIPs = 10.0.0.0/24
 PersistentKeepalive = 25
@@ -129,6 +175,8 @@ PersistentKeepalive = 25
  * This makes the app only accessible via VPN.
  */
 export async function restrictToVPN(ip: string, appName: string, appPort: number): Promise<void> {
+  validateIp(ip);
+  validatePort(appPort);
   const safeAppName = sanitizeName(appName);
   const domain = validateDomain(`${safeAppName}.${getDomain()}`);
 
