@@ -8,7 +8,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@canopy/scanner": "1.1.0",
+    "@canopy/scanner": "*",
     "ssh2": "^1.16.0"
   },
   "keywords": ["deploy", "vps", "hetzner", "docker", "nginx"],
