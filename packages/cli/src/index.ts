@@ -88,7 +88,8 @@ const PHASE_ICONS: Record<string, string> = {
   deploy: '🚀', default: '  ',
 };
 
-program.name('canopy').description('Security scanner & deploy tool for vibecoded apps').version('1.0.0');
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf-8'));
+program.name('canopy').description('Security scanner & deploy tool for vibecoded apps').version(pkg.version);
 
 program.command('scan [path]').description('Scan a project for security issues')
   .option('--json', 'Output raw JSON')

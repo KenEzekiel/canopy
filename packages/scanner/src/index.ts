@@ -10,6 +10,8 @@ import { Finding, ScanResult } from './types';
 
 export type { Finding, ScanResult, Severity, ScanSummary, ScanMeta } from './types';
 
+const SCANNER_PKG_DIR = path.resolve(__dirname, '..');
+
 function walkDir(dir: string, root: string): string[] {
   const results: string[] = [];
   let entries: fs.Dirent[];
@@ -18,8 +20,10 @@ function walkDir(dir: string, root: string): string[] {
   for (const entry of entries) {
     if (SKIP_DIRS.has(entry.name)) continue;
     const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) results.push(...walkDir(fullPath, root));
-    else if (entry.isFile()) results.push(path.relative(root, fullPath));
+    if (entry.isDirectory()) {
+      if (path.resolve(fullPath) === SCANNER_PKG_DIR) continue;
+      results.push(...walkDir(fullPath, root));
+    } else if (entry.isFile()) results.push(path.relative(root, fullPath));
   }
   return results;
 }
