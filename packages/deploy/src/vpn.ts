@@ -6,6 +6,14 @@ function sanitizeName(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
+/** Validate domain format: alphanumeric segments separated by dots/hyphens. */
+function validateDomain(domain: string): string {
+  if (!/^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(domain)) {
+    throw new Error(`Invalid domain format: ${domain}`);
+  }
+  return domain;
+}
+
 /**
  * Install WireGuard on a server and configure the server-side interface.
  */
@@ -38,7 +46,7 @@ PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING 
   // Enable IP forwarding (idempotent — only append if not already set)
   await sshExec(ip, 'grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf');
   await sshExec(ip, 'sysctl -p');
-  await sshExec(ip, 'systemctl enable wg-quick@wg0 && systemctl start wg-quick@wg0');
+  await sshExec(ip, 'systemctl enable wg-quick@wg0 && systemctl restart wg-quick@wg0');
 
   // Install dnsmasq for VPN DNS resolution (resolves app domains to VPN IP)
   await sshExec(ip, 'apt-get install -y dnsmasq');
@@ -66,9 +74,17 @@ export async function addVPNClient(
 ): Promise<{ config: string; clientIp: string }> {
   const safeClientName = sanitizeName(clientName);
 
+  // Validate clientIndex range (1 = server, 0 = network, 255 = broadcast)
+  if (!Number.isInteger(clientIndex) || clientIndex < 2 || clientIndex > 254) {
+    throw new Error(`clientIndex must be between 2 and 254, got: ${clientIndex}`);
+  }
+
   // Generate client keys in a secure temp directory with restricted permissions
   const { stdout: tmpDir } = await sshExec(ip, 'mktemp -d');
   const secureTmp = tmpDir.trim();
+  if (!/^\/tmp\/[a-zA-Z0-9._-]+$/.test(secureTmp)) {
+    throw new Error(`Unexpected mktemp output: ${secureTmp}`);
+  }
   await sshExec(ip, `chmod 700 "${secureTmp}" && wg genkey > "${secureTmp}/client.key" && chmod 600 "${secureTmp}/client.key" && cat "${secureTmp}/client.key" | wg pubkey > "${secureTmp}/client.pub"`);
   const { stdout: clientPrivKey } = await sshExec(ip, `cat "${secureTmp}/client.key"`);
   const { stdout: clientPubKey } = await sshExec(ip, `cat "${secureTmp}/client.pub"`);
@@ -79,14 +95,17 @@ export async function addVPNClient(
   // Get server public key
   const { stdout: serverPubKey } = await sshExec(ip, 'cat /etc/wireguard/server_public.key');
 
-  // Add peer to server config
-  const peerBlock = `
+  // Add peer to server config (idempotent — skip if peer with same name exists)
+  const { exitCode: peerExists } = await sshExec(ip, `grep -q "# ${safeClientName}$" /etc/wireguard/wg0.conf`);
+  if (peerExists !== 0) {
+    const peerBlock = `
 [Peer]
 # ${safeClientName}
 PublicKey = ${clientPubKey.trim()}
 AllowedIPs = ${clientIp}/32
 `;
-  await sshExec(ip, `echo '${peerBlock}' >> /etc/wireguard/wg0.conf`);
+    await sshExec(ip, `cat >> /etc/wireguard/wg0.conf << 'PEER_EOF'\n${peerBlock}PEER_EOF`);
+  }
   await sshExec(ip, 'bash -c \'wg syncconf wg0 <(wg-quick strip wg0)\' 2>/dev/null || systemctl restart wg-quick@wg0');
 
   // Build client config
@@ -111,7 +130,7 @@ PersistentKeepalive = 25
  */
 export async function restrictToVPN(ip: string, appName: string, appPort: number): Promise<void> {
   const safeAppName = sanitizeName(appName);
-  const domain = `${safeAppName}.${getDomain()}`;
+  const domain = validateDomain(`${safeAppName}.${getDomain()}`);
 
   // Register this domain in dnsmasq (idempotent — only add if not already present)
   const dnsEntry = `address=/${domain}/10.0.0.1`;
@@ -176,5 +195,6 @@ export async function restrictToVPN(ip: string, appName: string, appPort: number
 
   const nginxConf = lines.join('\n');
   await sshExec(ip, `cat > /etc/nginx/sites-available/${safeAppName} << 'NGINX_EOF'\n${nginxConf}\nNGINX_EOF`);
+  await sshExec(ip, `ln -sf /etc/nginx/sites-available/${safeAppName} /etc/nginx/sites-enabled/${safeAppName}`);
   await sshExec(ip, `nginx -t && systemctl reload nginx`);
 }
