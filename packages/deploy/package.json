@@ -1,6 +1,6 @@
 {
   "name": "@canopy/deploy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Canopy deploy engine — provision, build, deploy to Hetzner VPS",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,7 +8,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@canopy/scanner": "1.0.0",
+    "@canopy/scanner": "1.1.0",
     "ssh2": "^1.16.0"
   },
   "keywords": ["deploy", "vps", "hetzner", "docker", "nginx"],

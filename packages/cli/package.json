@@ -1,6 +1,6 @@
 {
   "name": "canopy-deploy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Canopy CLI — security scanner & deploy tool for vibecoded apps",
   "bin": {
     "canopy": "dist/index.js"
@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "commander": "^12.0.0",
-    "@canopy/scanner": "1.0.0",
-    "@canopy/deploy": "1.0.0"
+    "@canopy/scanner": "1.1.0",
+    "@canopy/deploy": "1.1.0"
   },
   "keywords": [
     "security",
