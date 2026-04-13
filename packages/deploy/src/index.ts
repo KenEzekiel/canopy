@@ -14,3 +14,7 @@ export { detectFramework } from './detect';
 export { generateDockerfile } from './dockerfile';
 export { setupVPN, addVPNClient, restrictToVPN } from './vpn';
 export { validateAppName } from './validation';
+export { deployTemplate } from './template-deploy';
+export type { TemplateDeployOpts, DeployResult as TemplateDeployResult } from './template-deploy';
+export { loadTemplate, listTemplates } from './templates';
+export type { Template } from './templates';

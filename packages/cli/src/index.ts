@@ -6,6 +6,7 @@ import {
   deploy, getStatus, getLogs, loadConfig, saveConfig,
   listDeployments, removeDeployment, deleteServer, getDeployment,
   getServerForApp, removeServer, sshExec, validateAppName,
+  deployTemplate, listTemplates, loadTemplate,
 } from '@canopy/deploy';
 import type { CanopyState } from '@canopy/deploy';
 import * as path from 'path';
@@ -83,7 +84,8 @@ function printMeta(meta: ScanMeta, summary: ScanSummary): void {
 const PHASE_ICONS: Record<string, string> = {
   scan: '🔍', detect: '🔎', state: '💾', provision: '☁️ ',
   dockerfile: '🐳', upload: '📦', build: '🔨', container: '▶️ ',
-  nginx: '🌐', ssl: '🔒', env: '🔑', vpn: '🛡️ ', default: '  ',
+  nginx: '🌐', ssl: '🔒', env: '🔑', vpn: '🛡️ ', clone: '📥',
+  deploy: '🚀', default: '  ',
 };
 
 program.name('canopy').description('Security scanner & deploy tool for vibecoded apps').version('1.0.0');
@@ -111,8 +113,9 @@ program.command('init').description('Initialize Canopy config').action(() => {
   console.log(`  ${c.green}✓${c.reset} Config saved to ~/.canopy/config.json`);
 });
 
-program.command('deploy [path]').description('Deploy a project to a Hetzner VPS')
+program.command('deploy [path]').description('Deploy a project (or a template with --template) to a Hetzner VPS')
   .requiredOption('--name <name>', 'App name (used for subdomain)')
+  .option('--template <template>', 'Deploy from a predefined template (run `canopy templates` to list)')
   .option('--json', 'Output raw JSON')
   .option('--verbose', 'Show detailed deploy progress')
   .option('--force', 'Skip scanner gate (deploy with critical findings)')
@@ -122,11 +125,9 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
   .option('--no-ssl', 'Skip SSL/certbot setup')
   .option('--private', 'Make app VPN-only (WireGuard)')
   .action(async (targetPath: string | undefined, opts: {
-    name: string; json?: boolean; verbose?: boolean; force?: boolean;
+    name: string; template?: string; json?: boolean; verbose?: boolean; force?: boolean;
     new?: boolean; region?: string; envFile?: string; ssl?: boolean; private?: boolean;
   }) => {
-    const projectPath = path.resolve(targetPath || process.cwd());
-
     // Load env vars from --env-file if provided
     let envVars: Record<string, string> | undefined;
     if (opts.envFile) {
@@ -145,6 +146,53 @@ program.command('deploy [path]').description('Deploy a project to a Hetzner VPS'
     const verboseLog = opts.verbose
       ? (phase: string, msg: string) => { const icon = PHASE_ICONS[phase] || PHASE_ICONS.default; console.log(`  ${c.dim}${icon}${c.reset} ${c.dim}[${phase}]${c.reset} ${msg}`); }
       : undefined;
+
+    // Template deploy path
+    if (opts.template) {
+      try {
+        const tmpl = loadTemplate(opts.template);
+        console.log(); console.log(`  ${c.bold}canopy deploy${c.reset}  ${c.dim}template: ${tmpl.name}${c.reset}`);
+        console.log(`  ${c.dim}name: ${opts.name}${c.reset}`); console.log();
+
+        // Collect required env vars from env-file or process.env
+        const templateEnv: Record<string, string> = { ...(envVars || {}) };
+        for (const req of tmpl.env_required) {
+          if (!templateEnv[req.name] && process.env[req.name]) {
+            templateEnv[req.name] = process.env[req.name]!;
+          }
+        }
+        for (const opt of tmpl.env_optional) {
+          if (!templateEnv[opt.name] && process.env[opt.name]) {
+            templateEnv[opt.name] = process.env[opt.name]!;
+          }
+        }
+
+        const result = await deployTemplate({
+          templateName: opts.template, appName: opts.name, env: templateEnv,
+          region: opts.region, private: opts.private, log: verboseLog,
+        });
+        if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
+        if (result.status === 'missing-env') { console.error(`  ${c.red}✗${c.reset} ${result.error}`); process.exit(1); }
+        if (result.status !== 'deployed') { console.error(`  ${c.red}✗${c.reset} ${result.status}: ${result.error}`); process.exit(1); }
+        console.log(`  ${c.green}✓${c.reset} Deployed (template: ${opts.template})`);
+        console.log(`  ${c.dim}URL:${c.reset}      ${result.url}`);
+        console.log(`  ${c.dim}IP:${c.reset}       ${result.ip}:${result.port}`);
+        console.log(`  ${c.dim}Template:${c.reset} ${opts.template}`);
+        if (result.vpnConfig) {
+          console.log();
+          console.log(`  ${c.bold}🔒 VPN Config${c.reset} (import into WireGuard app):`);
+          console.log(`  ${c.dim}${'─'.repeat(50)}${c.reset}`);
+          for (const line of result.vpnConfig.split('\n')) console.log(`  ${c.dim}${line}${c.reset}`);
+          console.log(`  ${c.dim}${'─'.repeat(50)}${c.reset}`);
+          console.log(`  ${c.yellow}This app is VPN-only.${c.reset}`);
+        }
+        console.log();
+      } catch (err: any) { console.error(`  ${c.red}Error:${c.reset} ${err.message}`); process.exit(2); }
+      return;
+    }
+
+    // Regular deploy path
+    const projectPath = path.resolve(targetPath || process.cwd());
     try {
       console.log(); console.log(`  ${c.bold}canopy deploy${c.reset}  ${c.dim}${projectPath}${c.reset}`);
       console.log(`  ${c.dim}name: ${opts.name}${c.reset}`); console.log();
@@ -277,6 +325,25 @@ program.command('destroy <name>').description('Remove an app (deletes server if 
         console.log(`  ${c.green}✓${c.reset} Removed ${name} (server still has other apps)`);
       }
     } catch (err: any) { console.error(`  ${c.red}Error:${c.reset} ${err.message}`); process.exit(2); }
+  });
+
+program.command('templates').description('List available deployment templates')
+  .option('--json', 'Output raw JSON')
+  .action((opts: { json?: boolean }) => {
+    const templates = listTemplates();
+    if (opts.json) { console.log(JSON.stringify(templates, null, 2)); return; }
+    console.log();
+    console.log(`  ${c.bold}Available templates${c.reset}`);
+    console.log();
+    for (const t of templates) {
+      console.log(`  ${c.bold}${t.name}${c.reset}  ${c.dim}${t.description}${c.reset}`);
+      console.log(`    ${c.dim}type: ${t.type}  ports: ${t.ports.join(', ')}${t.min_ram ? `  min-ram: ${t.min_ram}` : ''}${c.reset}`);
+      if (t.env_required.length > 0) {
+        console.log(`    ${c.dim}required env: ${t.env_required.map((e) => e.name).join(', ')}${c.reset}`);
+      }
+      console.log(`    ${c.dim}docs: ${t.docs}${c.reset}`);
+      console.log();
+    }
   });
 
 program.parse();
