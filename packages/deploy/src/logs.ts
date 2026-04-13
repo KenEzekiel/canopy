@@ -9,6 +9,7 @@ interface LogsResult {
 }
 
 export async function getLogs(name: string, lines: number = 100): Promise<LogsResult> {
+  if (!Number.isInteger(lines) || lines < 1 || lines > 10000) throw new Error('lines must be a positive integer between 1 and 10000');
   validateAppName(name);
   const deployment = getDeployment(name);
   if (!deployment) return { status: 'not-found' };

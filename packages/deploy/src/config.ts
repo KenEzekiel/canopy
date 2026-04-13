@@ -28,7 +28,7 @@ export function loadConfig(): CanopyConfig {
 export function saveConfig(config: CanopyConfig): void {
   ensureDir(CANOPY_DIR);
   const data = JSON.stringify(config, null, 2) + '\n';
-  fs.writeFileSync(CONFIG_TMP_PATH, data);
+  fs.writeFileSync(CONFIG_TMP_PATH, data, { mode: 0o600 });
   fs.renameSync(CONFIG_TMP_PATH, CONFIG_PATH);
 }
 

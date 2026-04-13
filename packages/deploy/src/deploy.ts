@@ -18,6 +18,10 @@ const noop = (): void => {};
 
 const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
 function validateEnvVars(env: Record<string, string>): void {
   for (const key of Object.keys(env)) {
     if (!ENV_KEY_REGEX.test(key)) {
@@ -182,7 +186,8 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   const envSecretPath = `/tmp/canopy-${name}-build.env`;
   if (hasEnvVars) {
     const envContent = Object.entries(env!).map(([k, v]) => `${k}=${v}`).join('\n');
-    await sshExec(serverIp, `cat > ${envSecretPath} << 'ENVFILE_EOF'\n${envContent}\nENVFILE_EOF`);
+    const encoded = Buffer.from(envContent).toString('base64');
+    await sshExec(serverIp, `echo ${shellEscape(encoded)} | base64 -d > ${envSecretPath}`);
     await sshExec(serverIp, `chmod 600 ${envSecretPath}`);
     log('env', 'Env secret file created for build');
   }
@@ -193,7 +198,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   const secretFlag = hasEnvVars ? `--secret id=env,src=${envSecretPath}` : '';
   // Also pass env vars as --build-arg for Dockerfiles that use ARG (e.g. VITE_*, NEXT_PUBLIC_*)
   const buildArgFlags = hasEnvVars
-    ? Object.entries(env!).map(([k, v]) => `--build-arg ${k}="${v}"`).join(' ')
+    ? Object.entries(env!).map(([k, v]) => `--build-arg ${k}=${shellEscape(v)}`).join(' ')
     : '';
   const buildResult = await sshExec(serverIp,
     `cd ${remotePath} && DOCKER_BUILDKIT=1 docker build ${secretFlag} ${buildArgFlags} -t ${name} .`
@@ -222,7 +227,8 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   let envFileFlag = '';
   if (env && Object.keys(env).length > 0) {
     const content = Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n');
-    await sshExec(serverIp, `cat > /tmp/${name}.env << 'ENVFILE_EOF'\n${content}\nENVFILE_EOF`);
+    const encoded = Buffer.from(content).toString('base64');
+    await sshExec(serverIp, `echo ${shellEscape(encoded)} | base64 -d > /tmp/${name}.env`);
     envFileFlag = `--env-file /tmp/${name}.env`;
   }
 
