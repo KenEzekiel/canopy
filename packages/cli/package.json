@@ -6,12 +6,15 @@
     "canopy": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc"
+    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --external:ssh2 --banner:js='#!/usr/bin/env node'",
+    "build": "npm run bundle"
   },
   "dependencies": {
     "commander": "^12.0.0",
-    "@canopy/scanner": "1.1.0",
-    "@canopy/deploy": "1.1.0"
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   },
   "keywords": [
     "security",
