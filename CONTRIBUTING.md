@@ -5,7 +5,7 @@ Thanks for your interest in contributing.
 ## Setup
 
 ```bash
-git clone https://github.com/dataretech/canopy.git
+git clone https://github.com/KenEzekiel/canopy.git
 cd canopy
 npm install
 npm run build
@@ -28,8 +28,8 @@ Build order matters — deploy depends on scanner, cli depends on both.
 ## Testing
 
 ```bash
-npx canopy scan /path/to/project          # test scanner
-npx canopy deploy /path --name test-app   # test deploy (needs CANOPY_HETZNER_TOKEN)
+npx canopy-deploy scan /path/to/project          # test scanner
+npx canopy-deploy deploy /path --name test-app   # test deploy (needs CANOPY_HETZNER_TOKEN)
 ```
 
 ## Code style
@@ -44,3 +44,4 @@ npx canopy deploy /path --name test-app   # test deploy (needs CANOPY_HETZNER_TO
 - One feature per PR
 - Include what changed and why
 - Test against a real project before submitting
+- Read and agree to the [Contributor License Agreement](/.github/CLA.md)

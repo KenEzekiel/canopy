@@ -7,6 +7,12 @@
   "scripts": {
     "build": "tsc"
   },
-  "keywords": ["security", "scanner"],
+  "keywords": ["security", "scanner", "vulnerabilities", "secrets"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KenEzekiel/canopy.git",
+    "directory": "packages/scanner"
+  },
+  "author": "Canopy Contributors",
   "license": "MIT"
 }

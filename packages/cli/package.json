@@ -1,5 +1,5 @@
 {
-  "name": "@canopy/cli",
+  "name": "canopy-deploy",
   "version": "1.0.0",
   "description": "Canopy CLI — security scanner & deploy tool for vibecoded apps",
   "bin": {
@@ -13,5 +13,24 @@
     "@canopy/scanner": "1.0.0",
     "@canopy/deploy": "1.0.0"
   },
-  "license": "MIT"
+  "keywords": [
+    "security",
+    "scanner",
+    "deploy",
+    "vps",
+    "hetzner",
+    "docker",
+    "cli",
+    "vibecoding",
+    "ai-native"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KenEzekiel/canopy.git"
+  },
+  "author": "Canopy Contributors",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }
