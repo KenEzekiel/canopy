@@ -9,7 +9,7 @@ export {
 } from './state';
 export type { AppInfo, ServerInfo, CanopyState } from './state';
 export { deleteServer } from './provision';
-export { sshExec } from './ssh';
+export { sshExec, setSSHConfig } from './ssh';
 export { detectFramework } from './detect';
 export { generateDockerfile } from './dockerfile';
 export { setupVPN, addVPNClient, restrictToVPN } from './vpn';

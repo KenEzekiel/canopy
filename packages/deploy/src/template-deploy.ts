@@ -1,5 +1,5 @@
 import { loadTemplate, type Template } from './templates';
-import { ensureSSHKey, sshExec, waitForSSH } from './ssh';
+import { ensureSSHKey, sshExec, waitForSSH, setSSHConfig } from './ssh';
 import { uploadSSHKey, createServer } from './provision';
 import { getDomain } from './config';
 import {
@@ -20,6 +20,8 @@ export interface TemplateDeployOpts {
   appName: string;
   env?: Record<string, string>;
   serverIp?: string;
+  sshPort?: number;
+  sshUser?: string;
   region?: string;
   private?: boolean;
   log?: (phase: string, message: string) => void;
@@ -36,7 +38,7 @@ export interface DeployResult {
 }
 
 export async function deployTemplate({
-  templateName, appName, env = {}, serverIp: existingIp, region,
+  templateName, appName, env = {}, serverIp: existingIp, sshPort, sshUser, region,
   private: isPrivate = false, log = noop,
 }: TemplateDeployOpts): Promise<DeployResult> {
   validateAppName(appName);
@@ -61,6 +63,14 @@ export async function deployTemplate({
   }
   for (const key of Object.keys(fullEnv)) validateEnvKey(key);
 
+  // Apply SSH config if provided
+  if (existingIp) {
+    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(existingIp)) {
+      throw new Error(`Invalid server IP address: ${existingIp}`);
+    }
+    setSSHConfig({ port: sshPort, username: sshUser });
+  }
+
   // Resolve server
   let serverIp: string;
   let serverId: string;
@@ -69,15 +79,25 @@ export async function deployTemplate({
   if (existingIp) {
     // Reuse provided server
     try { await sshExec(existingIp, 'echo ok'); } catch {
-      throw new Error(`Server ${existingIp} is unreachable.`);
+      throw new Error(`Server ${existingIp} is unreachable. Verify the IP, SSH port, and SSH user.`);
     }
-    // Find serverId from state by IP
+    // Find serverId from state by IP, or create external entry
     const available = findAvailableServer();
     if (available && available.ip === existingIp) {
       serverId = `srv-${available.id}`;
       appPort = getNextPort(serverId);
     } else {
-      throw new Error(`Server ${existingIp} not found in Canopy state. Provision via regular deploy first.`);
+      serverId = `ext-${existingIp.replace(/\./g, '-')}`;
+      const existingServer = getServerInfo(serverId);
+      if (existingServer) {
+        appPort = getNextPort(serverId);
+      } else {
+        appPort = 3001;
+        saveServer(serverId, {
+          id: 0, ip: existingIp, location: 'external',
+          createdAt: new Date().toISOString(), apps: [],
+        });
+      }
     }
     serverIp = existingIp;
     log('state', `Reusing server ${serverIp} (port ${appPort})`);

@@ -59,6 +59,13 @@ export function ensureSSHKey(): SSHKey {
 }
 
 
+// Module-level SSH config overrides
+let sshConfig: { port?: number; username?: string } = {};
+
+export function setSSHConfig(config: { port?: number; username?: string }): void {
+  sshConfig = config;
+}
+
 /**
  * Get an SSH connection to a server.
  */
@@ -70,8 +77,8 @@ function getConnection(ip: string): Promise<Client> {
     conn.on('error', reject);
     conn.connect({
       host: ip,
-      port: 22,
-      username: 'root',
+      port: sshConfig.port || 22,
+      username: sshConfig.username || 'root',
       privateKey: key.privateKey,
       readyTimeout: 30000,
     });
@@ -106,9 +113,12 @@ export async function rsyncUpload(ip: string, localPath: string, remotePath: str
   const excludes = ['node_modules', '.git', '.next', 'dist', 'build', '.cache', '.env', '.env.local', '.env.production']
     .map(e => `--exclude='${e}'`).join(' ');
 
+  const user = sshConfig.username || 'root';
+  const port = sshConfig.port || 22;
+
   try {
     execSync(
-      `rsync -azq --delete ${excludes} -e "ssh -i '${PRIVATE_KEY_PATH}' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" "${localPath}/" root@${ip}:${remotePath}/`,
+      `rsync -azq --delete ${excludes} -e "ssh -i '${PRIVATE_KEY_PATH}' -p ${port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" "${localPath}/" ${user}@${ip}:${remotePath}/`,
       { stdio: 'pipe' }
     );
   } catch (err: any) {
@@ -140,8 +150,10 @@ export async function sshUpload(ip: string, localPath: string, remotePath: strin
     await sshExec(ip, `mkdir -p ${remotePath}`);
 
     // Upload via native scp (fast, uses system SSH)
+    const user = sshConfig.username || 'root';
+    const port = sshConfig.port || 22;
     execSync(
-      `scp -i "${PRIVATE_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${tarPath}" root@${ip}:/tmp/canopy-upload.tar.gz`,
+      `scp -P ${port} -i "${PRIVATE_KEY_PATH}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${tarPath}" ${user}@${ip}:/tmp/canopy-upload.tar.gz`,
       { stdio: 'pipe' }
     );
 

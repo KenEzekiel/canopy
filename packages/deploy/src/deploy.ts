@@ -7,7 +7,7 @@ import {
   getDeployment, saveDeployment, findAvailableServer,
   getNextPort, saveServer, getServerInfo, type AppInfo,
 } from './state';
-import { ensureSSHKey, sshExec, sshUpload, rsyncUpload, waitForSSH } from './ssh';
+import { ensureSSHKey, sshExec, sshUpload, rsyncUpload, waitForSSH, setSSHConfig } from './ssh';
 import { uploadSSHKey, createServer } from './provision';
 import { getDomain } from './config';
 import { setupVPN, addVPNClient, restrictToVPN } from './vpn';
@@ -46,6 +46,9 @@ export interface DeployOpts {
   region?: string;
   noSsl?: boolean;
   private?: boolean;
+  server?: string;
+  sshPort?: number;
+  sshUser?: string;
   log?: (phase: string, message: string) => void;
 }
 
@@ -61,9 +64,18 @@ export interface DeployResult {
   vpnConfig?: string;
 }
 
-export async function deploy({ projectPath, name, env, force = false, newServer = false, region, noSsl = false, private: isPrivate = false, log = noop }: DeployOpts): Promise<DeployResult> {
+export async function deploy({ projectPath, name, env, force = false, newServer = false, region, noSsl = false, private: isPrivate = false, server, sshPort, sshUser, log = noop }: DeployOpts): Promise<DeployResult> {
   validateAppName(name);
   if (env) validateEnvVars(env);
+
+  // Validate and apply SSH config for existing server
+  if (server) {
+    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(server)) {
+      throw new Error(`Invalid server IP address: ${server}`);
+    }
+    setSSHConfig({ port: sshPort, username: sshUser });
+  }
+
   const absPath = path.resolve(projectPath);
   const domain = getDomain();
   const appDomain = `${name}.${domain}`;
@@ -104,6 +116,28 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
     } catch {
       throw new Error(`Server ${serverIp} is unreachable. It may have been deleted. Run \`canopy destroy ${name}\` to clean up state, then redeploy.`);
     }
+  } else if (server) {
+    // --server flag: use existing server, skip provisioning
+    serverIp = server;
+    serverId = `ext-${server.replace(/\./g, '-')}`;
+    log('state', `Using existing server ${serverIp}...`);
+    try {
+      await sshExec(serverIp, 'echo ok');
+    } catch {
+      throw new Error(`Server ${serverIp} is unreachable. Verify the IP, SSH port, and SSH user.`);
+    }
+    // Find or assign port
+    const existingServer = getServerInfo(serverId);
+    if (existingServer) {
+      appPort = getNextPort(serverId);
+    } else {
+      appPort = 3001;
+      saveServer(serverId, {
+        id: 0, ip: serverIp, location: 'external',
+        createdAt: new Date().toISOString(), apps: [],
+      });
+    }
+    log('state', `Deploying ${name} to ${serverIp}:${appPort}`);
   } else if (!newServer) {
     // Try to find an existing server with capacity
     const available = findAvailableServer();

@@ -4,7 +4,7 @@ import {
   deploy, getStatus, getLogs, loadConfig, saveConfig,
   listDeployments, removeDeployment, deleteServer, getDeployment,
   getServerForApp, removeServer, sshExec, validateAppName,
-  deployTemplate, listTemplates, loadTemplate,
+  deployTemplate, listTemplates, loadTemplate, setSSHConfig,
 } from '@canopy/deploy';
 import type { CanopyState } from '@canopy/deploy';
 import * as path from 'path';
@@ -123,9 +123,13 @@ program.command('deploy [path]').description('Deploy a project (or a template wi
   .option('--env-file <path>', 'Path to .env file to load')
   .option('--no-ssl', 'Skip SSL/certbot setup')
   .option('--private', 'Make app VPN-only (WireGuard)')
+  .option('--server <ip>', 'Use an existing server (skip Hetzner provisioning)')
+  .option('--ssh-port <port>', 'SSH port (default: 22)', parseInt)
+  .option('--ssh-user <user>', 'SSH user (default: root)')
   .action(async (targetPath: string | undefined, opts: {
     name: string; template?: string; json?: boolean; verbose?: boolean; force?: boolean;
     new?: boolean; region?: string; envFile?: string; ssl?: boolean; private?: boolean;
+    server?: string; sshPort?: number; sshUser?: string;
   }) => {
     // Load env vars from --env-file if provided
     let envVars: Record<string, string> | undefined;
@@ -168,6 +172,7 @@ program.command('deploy [path]').description('Deploy a project (or a template wi
 
         const result = await deployTemplate({
           templateName: opts.template, appName: opts.name, env: templateEnv,
+          serverIp: opts.server, sshPort: opts.sshPort, sshUser: opts.sshUser,
           region: opts.region, private: opts.private, log: verboseLog,
         });
         if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
@@ -198,7 +203,9 @@ program.command('deploy [path]').description('Deploy a project (or a template wi
       const result = await deploy({
         projectPath, name: opts.name, env: envVars,
         force: opts.force, newServer: opts.new, region: opts.region,
-        noSsl: opts.ssl === false, private: opts.private, log: verboseLog,
+        noSsl: opts.ssl === false, private: opts.private,
+        server: opts.server, sshPort: opts.sshPort, sshUser: opts.sshUser,
+        log: verboseLog,
       });
       if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
       if (result.status === 'blocked') { console.log(`  ${c.red}✗${c.reset} Deploy blocked: ${result.reason}`); if (result.scan) { printScore(result.scan.score); printFindings(result.scan.findings); } process.exit(1); }
