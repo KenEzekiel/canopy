@@ -7,7 +7,7 @@ import {
   getNextPort, saveServer, getServerInfo,
 } from './state';
 import { setupVPN, addVPNClient, restrictToVPN } from './vpn';
-import { validateAppName } from './validation';
+import { validateAppName, validateDomain, validateEnvKey, validateEmail } from './validation';
 
 const noop = (): void => {};
 
@@ -42,6 +42,7 @@ export async function deployTemplate({
   validateAppName(appName);
   const template = loadTemplate(templateName);
   const domain = getDomain();
+  validateDomain(domain);
   const appDomain = `${appName}.${domain}`;
 
   // Validate required env vars
@@ -58,6 +59,7 @@ export async function deployTemplate({
   for (const opt of template.env_optional) {
     if (!fullEnv[opt.name] && opt.default) fullEnv[opt.name] = opt.default;
   }
+  for (const key of Object.keys(fullEnv)) validateEnvKey(key);
 
   // Resolve server
   let serverIp: string;
@@ -117,7 +119,10 @@ export async function deployTemplate({
 
   // Write env file via base64
   if (Object.keys(fullEnv).length > 0) {
-    const content = Object.entries(fullEnv).map(([k, v]) => `${k}=${v}`).join('\n');
+    const content = Object.entries(fullEnv).map(([k, v]) => {
+      const escaped = v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+      return `${k}="${escaped}"`;
+    }).join('\n');
     const encoded = Buffer.from(content).toString('base64');
     await sshExec(serverIp, `echo ${shellEscape(encoded)} | base64 -d > ${remotePath}/.env`);
     await sshExec(serverIp, `chmod 600 ${remotePath}/.env`);
@@ -126,7 +131,7 @@ export async function deployTemplate({
 
   // Create volumes
   for (const vol of template.volumes) {
-    await sshExec(serverIp, `mkdir -p ${vol.host}`);
+    await sshExec(serverIp, `mkdir -p ${shellEscape(vol.host)}`);
   }
 
   // Deploy based on type
@@ -135,14 +140,14 @@ export async function deployTemplate({
   if (template.type === 'docker-compose') {
     log('deploy', 'Running docker compose up...');
     const composeFile = template.compose_file || 'docker-compose.yml';
-    const result = await sshExec(serverIp, `cd ${remotePath} && docker compose -f ${composeFile} up -d`);
+    const result = await sshExec(serverIp, `cd ${remotePath} && docker compose -f ${shellEscape(composeFile)} up -d`);
     if (result.exitCode !== 0) {
       return { status: 'deploy-failed', error: result.stderr || result.stdout };
     }
   } else if (template.type === 'image') {
     log('deploy', 'Running docker container...');
     await sshExec(serverIp, `docker stop ${appName} 2>/dev/null; docker rm ${appName} 2>/dev/null`);
-    const volFlags = template.volumes.map((v) => `-v ${v.host}:${v.container}`).join(' ');
+    const volFlags = template.volumes.map((v) => `-v ${shellEscape(v.host)}:${shellEscape(v.container)}`).join(' ');
     const envFileFlag = Object.keys(fullEnv).length > 0 ? `--env-file ${remotePath}/.env` : '';
     const result = await sshExec(serverIp,
       `docker run -d --name ${appName} --restart unless-stopped ${envFileFlag} ${volFlags} -p ${appPort}:${containerPort} ${template.repo.split('/').pop()}:latest`
@@ -186,8 +191,9 @@ export async function deployTemplate({
   // SSL
   log('ssl', `Setting up SSL for ${appDomain}...`);
   const sslEmail = process.env.CANOPY_SSL_EMAIL || `admin@${domain}`;
+  validateEmail(sslEmail);
   const sslResult = await sshExec(serverIp,
-    `certbot --nginx -d ${appDomain} --non-interactive --agree-tos -m ${sslEmail} 2>&1`
+    `certbot --nginx -d ${shellEscape(appDomain)} --non-interactive --agree-tos -m ${shellEscape(sslEmail)} 2>&1`
   );
   if (sslResult.exitCode !== 0) {
     log('ssl', `SSL setup failed (non-blocking): ${sslResult.stdout.slice(-200)}`);
