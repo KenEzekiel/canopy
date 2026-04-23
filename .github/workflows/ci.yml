@@ -24,13 +24,19 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install dependencies
         run: npm install
 
       - name: Build
         run: npm run build
 
-      - name: Test scanner
+      - name: Run scanner tests
+        run: cd packages/scanner && bun test
+
+      - name: Test scanner integration
         run: |
           node -e "
             const { scan } = require('./packages/scanner/dist/index');

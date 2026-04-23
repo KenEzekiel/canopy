@@ -1,10 +1,14 @@
 {
   "name": "canopy-deploy",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Canopy CLI — security scanner & deploy tool for vibecoded apps",
   "bin": {
     "canopy": "dist/index.js"
   },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
   "scripts": {
     "bundle": "esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js --external:ssh2 --banner:js='#!/usr/bin/env node'",
     "build": "npm run bundle"
