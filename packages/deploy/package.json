@@ -1,6 +1,6 @@
 {
   "name": "@canopy/deploy",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Canopy deploy engine — provision, build, deploy to Hetzner VPS",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -11,7 +11,13 @@
     "@canopy/scanner": "*",
     "ssh2": "^1.16.0"
   },
-  "keywords": ["deploy", "vps", "hetzner", "docker", "nginx"],
+  "keywords": [
+    "deploy",
+    "vps",
+    "hetzner",
+    "docker",
+    "nginx"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/KenEzekiel/canopy.git",

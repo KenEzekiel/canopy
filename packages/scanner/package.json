@@ -1,13 +1,18 @@
 {
   "name": "@canopy/scanner",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Security scanner engine for Canopy",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc"
   },
-  "keywords": ["security", "scanner", "vulnerabilities", "secrets"],
+  "keywords": [
+    "security",
+    "scanner",
+    "vulnerabilities",
+    "secrets"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/KenEzekiel/canopy.git",

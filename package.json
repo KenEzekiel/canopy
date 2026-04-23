@@ -1,6 +1,6 @@
 {
   "name": "canopy",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Security scanner + deploy tool for vibecoded apps. Scan for vulnerabilities, deploy to your own VPS with one command.",
   "private": true,
   "workspaces": [
