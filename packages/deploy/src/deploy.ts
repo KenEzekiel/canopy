@@ -62,6 +62,8 @@ export interface DeployResult {
   framework?: Framework;
   error?: string;
   vpnConfig?: string;
+  sslFailed?: boolean;
+  newServer?: boolean;
 }
 
 export async function deploy({ projectPath, name, env, force = false, newServer = false, region, noSsl = false, private: isPrivate = false, server, sshPort, sshUser, log = noop }: DeployOpts): Promise<DeployResult> {
@@ -221,8 +223,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   if (hasEnvVars) {
     const envContent = Object.entries(env!).map(([k, v]) => `${k}=${v}`).join('\n');
     const encoded = Buffer.from(envContent).toString('base64');
-    await sshExec(serverIp, `echo ${shellEscape(encoded)} | base64 -d > ${envSecretPath}`);
-    await sshExec(serverIp, `chmod 600 ${envSecretPath}`);
+    await sshExec(serverIp, `(umask 077; echo ${shellEscape(encoded)} | base64 -d > ${envSecretPath})`);
     log('env', 'Env secret file created for build');
   }
 
@@ -230,12 +231,8 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   log('build', 'Building Docker image...');
   const buildStart = Date.now();
   const secretFlag = hasEnvVars ? `--secret id=env,src=${envSecretPath}` : '';
-  // Also pass env vars as --build-arg for Dockerfiles that use ARG (e.g. VITE_*, NEXT_PUBLIC_*)
-  const buildArgFlags = hasEnvVars
-    ? Object.entries(env!).map(([k, v]) => `--build-arg ${k}=${shellEscape(v)}`).join(' ')
-    : '';
   const buildResult = await sshExec(serverIp,
-    `cd ${remotePath} && DOCKER_BUILDKIT=1 docker build ${secretFlag} ${buildArgFlags} -t ${name} .`
+    `cd ${remotePath} && DOCKER_BUILDKIT=1 docker build ${secretFlag} -t ${name} .`
   );
 
   // Clean up secret file immediately after build
@@ -262,7 +259,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   if (env && Object.keys(env).length > 0) {
     const content = Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n');
     const encoded = Buffer.from(content).toString('base64');
-    await sshExec(serverIp, `echo ${shellEscape(encoded)} | base64 -d > /tmp/${name}.env`);
+    await sshExec(serverIp, `(umask 077; echo ${shellEscape(encoded)} | base64 -d > /tmp/${name}.env)`);
     envFileFlag = `--env-file /tmp/${name}.env`;
   }
 
@@ -276,6 +273,28 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   if (runResult.exitCode !== 0) {
     log('container', 'Container failed to start');
     return failWithCleanupHint(name, 'run-failed', runResult.stderr || runResult.stdout);
+  }
+
+  // Post-deploy health check: wait, verify container is running, check HTTP response
+  log('container', 'Verifying container health...');
+  await new Promise<void>((r) => setTimeout(r, 4000));
+  const inspectResult = await sshExec(serverIp,
+    `docker inspect --format='{{.State.Status}}' ${name} 2>/dev/null`
+  );
+  const containerState = inspectResult.stdout.trim();
+  if (containerState !== 'running') {
+    const logsResult = await sshExec(serverIp, `docker logs --tail 20 ${name} 2>&1`);
+    return failWithCleanupHint(name, 'run-failed',
+      `Container exited (state: ${containerState}).\n\nLast 20 lines of logs:\n${logsResult.stdout}`);
+  }
+  const curlResult = await sshExec(serverIp,
+    `curl -sf -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:${appPort} 2>/dev/null || echo "000"`
+  );
+  const httpCode = curlResult.stdout.trim();
+  if (httpCode === '000') {
+    log('container', `Container running but not responding on port ${appPort} (may still be starting)`);
+  } else {
+    log('container', `Container healthy (HTTP ${httpCode})`);
   }
   log('container', 'Container running');
 
@@ -314,6 +333,7 @@ NGINX_EOF`);
   log('nginx', 'Nginx configured');
 
   // 9. SSL via certbot (unless --no-ssl)
+  let sslFailed = false;
   if (!noSsl) {
     log('ssl', `Setting up SSL for ${appDomain}...`);
     const sslEmail = process.env.CANOPY_SSL_EMAIL || `admin@${domain}`;
@@ -321,6 +341,7 @@ NGINX_EOF`);
       `certbot --nginx -d ${appDomain} --non-interactive --agree-tos -m ${sslEmail} 2>&1`
     );
     if (sslResult.exitCode !== 0) {
+      sslFailed = true;
       log('ssl', `SSL setup failed (non-blocking): ${sslResult.stdout.slice(-200)}`);
     } else {
       log('ssl', 'SSL configured');
@@ -380,7 +401,7 @@ NGINX_EOF`);
   });
   log('state', 'Deployment state saved');
 
-  const protocol = noSsl ? 'http' : 'https';
+  const protocol = (noSsl || sslFailed) ? 'http' : 'https';
   return {
     status: 'deployed',
     url: `${protocol}://${appDomain}`,
@@ -389,6 +410,8 @@ NGINX_EOF`);
     framework,
     scan: scanResult,
     vpnConfig,
+    sslFailed,
+    newServer: !isRedeploy && !server,
   };
 }
 

@@ -216,6 +216,13 @@ program.command('deploy [path]').description('Deploy a project (or a template wi
       console.log(`  ${c.dim}IP:${c.reset}        ${result.ip}:${result.port}`);
       console.log(`  ${c.dim}Framework:${c.reset} ${result.framework}`);
       console.log(`  ${c.dim}Score:${c.reset}     ${result.scan?.score}/100`);
+      if (result.sslFailed) {
+        console.log(`  ${c.yellow}⚠${c.reset}  SSL setup failed. URL is using ${c.yellow}http://${c.reset} — re-run deploy or set up SSL manually.`);
+      }
+      if (result.newServer) {
+        const appDomain = result.url?.replace(/^https?:\/\//, '');
+        console.log(`  ${c.cyan}ℹ${c.reset}  Point ${c.bold}${appDomain}${c.reset} to ${c.bold}${result.ip}${c.reset} via DNS A record${result.sslFailed ? ' (required for SSL)' : ''}.`);
+      }
       if (result.vpnConfig) {
         console.log();
         console.log(`  ${c.bold}🔒 VPN Config${c.reset} (import into WireGuard app):`);

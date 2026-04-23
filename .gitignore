@@ -12,4 +12,4 @@ build/
 .kiro/
 obsidian-docs
 obsidian-docs/
-.kiro/*.tgz
+*.tgz

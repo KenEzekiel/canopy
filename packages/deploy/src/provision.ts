@@ -5,6 +5,11 @@ const API_BASE = 'https://api.hetzner.cloud/v1';
 const CLOUD_INIT = `#!/bin/bash
 apt-get update
 apt-get install -y docker.io docker-compose nginx certbot python3-certbot-nginx curl
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow 51820/udp
+ufw --force enable
 systemctl enable docker
 systemctl start docker
 systemctl enable nginx
