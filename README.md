@@ -42,7 +42,7 @@ npx canopy-deploy deploy --name myapp --json
 ## Quick Demo
 
 ```bash
-# 1. Scan for security issues (14 checks, <100ms)
+# 1. Scan for security issues (<100ms)
 npx canopy-deploy scan
 ✓ No hardcoded secrets
 ✓ No SQL injection risks
@@ -76,7 +76,7 @@ Get a Hetzner token: [console.hetzner.cloud](https://console.hetzner.cloud) → 
 
 ## Features
 
-### 🔒 Security Scanner (14 checks, <100ms)
+### 🔒 Security Scanner (18 checks, <100ms)
 Blocks deploys on critical issues. Scans for:
 - Hardcoded secrets (Supabase, Firebase, OpenAI, Stripe, AWS, DB URLs, private keys)
 - Committed .env files
@@ -220,6 +220,18 @@ Or use `.env` file (see `.env.example`).
 
 ---
 
+## Bring Your Own Server
+
+Already have a VPS? Skip Hetzner provisioning:
+
+```bash
+npx canopy-deploy deploy --name myapp --server 1.2.3.4 --ssh-user root --ssh-port 22
+```
+
+Works with any server you can SSH into — DigitalOcean, Linode, AWS Lightsail, Vultr, or any Ubuntu server with Docker installed.
+
+---
+
 ## For AI Agents
 
 Canopy is designed for autonomous deployment by AI coding agents.
@@ -313,7 +325,7 @@ npx canopy-deploy scan .
 **Project structure:**
 ```
 packages/
-  scanner/    Security scanner engine (14 checks)
+  scanner/    Security scanner engine (18 checks)
   deploy/     Deploy engine (Hetzner + SSH + Docker)
   cli/        CLI wrapper (commander)
 ```
@@ -340,6 +352,16 @@ Open an issue or PR on [GitHub](https://github.com/KenEzekiel/canopy).
 Interested in integrating Canopy into your AI agent, IDE, or platform? Want to collaborate on features?
 
 **Contact:** DM [@KenEzekiel](https://twitter.com/KenEzekiel) on X/Twitter or open a GitHub issue.
+
+---
+
+## Roadmap
+
+- [ ] Managed hosting (deploy without your own VPS)
+- [ ] More cloud providers (DigitalOcean, AWS Lightsail)
+- [ ] Auto-deploy on git push
+- [ ] Web dashboard
+- [ ] `canopy ssh` command for quick server access
 
 ---
 
