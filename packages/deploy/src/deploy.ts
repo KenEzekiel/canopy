@@ -444,6 +444,16 @@ async function provisionNewServer(
 
   log('provision', 'Waiting for SSH (cloud-init)...');
   await waitForSSH(serverIp, 180000);
+
+  // Wait for cloud-init to finish installing Docker
+  log('provision', 'Waiting for Docker (cloud-init)...');
+  for (let i = 0; i < 30; i++) {
+    const result = await sshExec(serverIp, 'docker --version 2>/dev/null && echo DOCKER_READY');
+    if (result.stdout.includes('DOCKER_READY')) break;
+    if (i === 29) log('provision', 'Warning: Docker not detected after 60s, proceeding anyway');
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
   log('provision', 'Server ready');
 
   return { serverIp, serverId };
