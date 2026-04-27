@@ -1,6 +1,6 @@
 {
   "name": "@canopy/scanner",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Security scanner engine for Canopy",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

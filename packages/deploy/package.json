@@ -1,6 +1,6 @@
 {
   "name": "@canopy/deploy",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Canopy deploy engine — provision, build, deploy to Hetzner VPS",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

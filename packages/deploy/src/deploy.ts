@@ -303,7 +303,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   const nginxConf = [
     'server {',
     '    listen 80;',
-    `    server_name ${appDomain};`,
+    `    server_name ${appDomain} ${serverIp};`,
     '    location / {',
     `        proxy_pass http://localhost:${appPort};`,
     '        proxy_set_header Host $host;',
@@ -314,16 +314,16 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
     '}',
   ].join('\n');
   await sshExec(serverIp, `mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled`);
+  // Remove Ubuntu's default nginx config and any stale defaults to avoid default_server conflict
+  await sshExec(serverIp, `rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default`);
   await sshExec(serverIp, `cat > /etc/nginx/sites-available/${name} << 'NGINX_EOF'\n${nginxConf}\nNGINX_EOF`);
   await sshExec(serverIp, `ln -sf /etc/nginx/sites-available/${name} /etc/nginx/sites-enabled/`);
 
-  // Ensure a default catch-all exists (drops unmatched requests instead of falling through)
-  await sshExec(serverIp, `test -f /etc/nginx/sites-available/00-default || cat > /etc/nginx/sites-available/00-default << 'NGINX_EOF'
+  // Ensure a default catch-all exists (drops unmatched requests)
+  await sshExec(serverIp, `cat > /etc/nginx/sites-available/00-default << 'NGINX_EOF'
 server {
     listen 80 default_server;
-    listen 443 default_server ssl;
     server_name _;
-    ssl_reject_handshake on;
     return 444;
 }
 NGINX_EOF`);
