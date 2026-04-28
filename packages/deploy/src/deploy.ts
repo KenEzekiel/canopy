@@ -81,8 +81,8 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   }
 
   const absPath = path.resolve(projectPath);
-  const domain = getDomain();
-  const subDomain = `${name}.${domain}`;
+  const domain = customDomain ? null : getDomain();
+  const subDomain = domain ? `${name}.${domain}` : name;
   const appDomain = customDomain || subDomain;
 
   // 1. Scan
@@ -347,7 +347,7 @@ NGINX_EOF`);
   let sslFailed = false;
   if (!noSsl) {
     log('ssl', `Setting up SSL for ${appDomain}...`);
-    const sslEmail = process.env.CANOPY_SSL_EMAIL || `admin@${domain}`;
+    const sslEmail = process.env.CANOPY_SSL_EMAIL || `admin@${customDomain || domain || 'canopy.dev'}`;
     const certDomains = customDomain ? `-d ${customDomain}` : `-d ${subDomain}`;
     const sslResult = await sshExec(serverIp,
       `certbot --nginx ${certDomains} --non-interactive --agree-tos -m ${sslEmail} 2>&1`
