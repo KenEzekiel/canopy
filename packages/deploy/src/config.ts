@@ -54,3 +54,10 @@ export function getDomain(): string {
   if (!envDomain) throw new Error('No domain configured. Set CANOPY_DOMAIN env var or add "domain" to ~/.canopy/config.json.');
   return envDomain;
 }
+
+/**
+ * Returns the path to Canopy's SSH private key.
+ */
+export function getSSHKeyPath(): string {
+  return path.join(CANOPY_DIR, 'keys', 'canopy_ed25519');
+}

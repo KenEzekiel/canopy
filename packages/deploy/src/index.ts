@@ -1,7 +1,7 @@
 export { deploy } from './deploy';
 export { getStatus } from './status';
 export { getLogs } from './logs';
-export { loadConfig, saveConfig, getHetznerToken, getDomain } from './config';
+export { loadConfig, saveConfig, getHetznerToken, getDomain, getSSHKeyPath, CANOPY_DIR } from './config';
 export {
   getDeployment, saveDeployment, listDeployments, removeDeployment,
   getServerInfo, saveServer, removeServer, findAvailableServer,

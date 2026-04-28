@@ -49,6 +49,7 @@ export interface DeployOpts {
   server?: string;
   sshPort?: number;
   sshUser?: string;
+  customDomain?: string;
   log?: (phase: string, message: string) => void;
 }
 
@@ -66,9 +67,10 @@ export interface DeployResult {
   newServer?: boolean;
 }
 
-export async function deploy({ projectPath, name, env, force = false, newServer = false, region, noSsl = false, private: isPrivate = false, server, sshPort, sshUser, log = noop }: DeployOpts): Promise<DeployResult> {
+export async function deploy({ projectPath, name, env, force = false, newServer = false, region, noSsl = false, private: isPrivate = false, server, sshPort, sshUser, customDomain: customDomainOpt, log = noop }: DeployOpts): Promise<DeployResult> {
   validateAppName(name);
   if (env) validateEnvVars(env);
+  let customDomain = customDomainOpt;
 
   // Validate and apply SSH config for existing server
   if (server) {
@@ -80,7 +82,8 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
 
   const absPath = path.resolve(projectPath);
   const domain = getDomain();
-  const appDomain = `${name}.${domain}`;
+  const subDomain = `${name}.${domain}`;
+  const appDomain = customDomain || subDomain;
 
   // 1. Scan
   log('scan', 'Running security scan...');
@@ -112,6 +115,10 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
     serverId = existingApp.serverId;
     appPort = existingApp.port;
     isRedeploy = true;
+    // Inherit custom domain from previous deploy if not explicitly provided
+    if (!customDomain && existingApp.customDomain) {
+      customDomain = existingApp.customDomain;
+    }
     log('state', `Redeploying ${name} to ${serverIp}:${appPort}`);
     try {
       await sshExec(serverIp, 'echo ok');
@@ -180,6 +187,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
       serverIp,
       port: appPort,
       domain: appDomain,
+      customDomain,
       framework,
       lastDeploy: '',
       createdAt: new Date().toISOString(),
@@ -300,10 +308,13 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
 
   // 8. Configure nginx for this app
   log('nginx', 'Configuring reverse proxy...');
+  const serverNames = customDomain
+    ? `${customDomain} ${subDomain} ${serverIp}`
+    : `${subDomain} ${serverIp}`;
   const nginxConf = [
     'server {',
     '    listen 80;',
-    `    server_name ${appDomain} ${serverIp};`,
+    `    server_name ${serverNames};`,
     '    location / {',
     `        proxy_pass http://localhost:${appPort};`,
     '        proxy_set_header Host $host;',
@@ -337,8 +348,9 @@ NGINX_EOF`);
   if (!noSsl) {
     log('ssl', `Setting up SSL for ${appDomain}...`);
     const sslEmail = process.env.CANOPY_SSL_EMAIL || `admin@${domain}`;
+    const certDomains = customDomain ? `-d ${customDomain}` : `-d ${subDomain}`;
     const sslResult = await sshExec(serverIp,
-      `certbot --nginx -d ${appDomain} --non-interactive --agree-tos -m ${sslEmail} 2>&1`
+      `certbot --nginx ${certDomains} --non-interactive --agree-tos -m ${sslEmail} 2>&1`
     );
     if (sslResult.exitCode !== 0) {
       sslFailed = true;
@@ -394,6 +406,7 @@ NGINX_EOF`);
     serverIp,
     port: appPort,
     domain: appDomain,
+    customDomain,
     framework,
     lastDeploy: new Date().toISOString(),
     createdAt: getDeployment(name)?.createdAt || new Date().toISOString(),

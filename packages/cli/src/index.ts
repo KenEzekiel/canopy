@@ -5,6 +5,7 @@ import {
   listDeployments, removeDeployment, deleteServer, getDeployment,
   getServerForApp, removeServer, sshExec, validateAppName,
   deployTemplate, listTemplates, loadTemplate, setSSHConfig,
+  getSSHKeyPath,
 } from '@canopy/deploy';
 import type { CanopyState } from '@canopy/deploy';
 import * as path from 'path';
@@ -114,6 +115,7 @@ program.command('init').description('Initialize Canopy config').action(() => {
 
 program.command('deploy [path]').description('Deploy a project (or a template with --template) to a Hetzner VPS')
   .requiredOption('--name <name>', 'App name (used for subdomain)')
+  .option('--domain <domain>', 'Custom domain (e.g. myapp.com) — used instead of {name}.{base-domain}')
   .option('--template <template>', 'Deploy from a predefined template (run `canopy templates` to list)')
   .option('--json', 'Output raw JSON')
   .option('--verbose', 'Show detailed deploy progress')
@@ -127,7 +129,7 @@ program.command('deploy [path]').description('Deploy a project (or a template wi
   .option('--ssh-port <port>', 'SSH port (default: 22)', parseInt)
   .option('--ssh-user <user>', 'SSH user (default: root)')
   .action(async (targetPath: string | undefined, opts: {
-    name: string; template?: string; json?: boolean; verbose?: boolean; force?: boolean;
+    name: string; domain?: string; template?: string; json?: boolean; verbose?: boolean; force?: boolean;
     new?: boolean; region?: string; envFile?: string; ssl?: boolean; private?: boolean;
     server?: string; sshPort?: number; sshUser?: string;
   }) => {
@@ -205,6 +207,7 @@ program.command('deploy [path]').description('Deploy a project (or a template wi
         force: opts.force, newServer: opts.new, region: opts.region,
         noSsl: opts.ssl === false, private: opts.private,
         server: opts.server, sshPort: opts.sshPort, sshUser: opts.sshUser,
+        customDomain: opts.domain,
         log: verboseLog,
       });
       if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.status === 'deployed' ? 0 : 1); }
@@ -356,6 +359,19 @@ program.command('templates').description('List available deployment templates')
       }
       console.log(`    ${c.dim}docs: ${t.docs}${c.reset}`);
       console.log();
+    }
+  });
+
+program.command('ssh <name>').description('SSH into the server running an app')
+  .action(async (name: string) => {
+    const app = getDeployment(name);
+    if (!app) { console.error(`  ${c.red}Error:${c.reset} App "${name}" not found. Run ${c.dim}canopy list${c.reset} to see deployments.`); process.exit(1); }
+    const keyPath = getSSHKeyPath();
+    const { execSync } = await import('child_process');
+    try {
+      execSync(`ssh -i ${keyPath} -o StrictHostKeyChecking=no root@${app.serverIp}`, { stdio: 'inherit' });
+    } catch {
+      // SSH session ended (normal exit or error) — don't print anything
     }
   });
 

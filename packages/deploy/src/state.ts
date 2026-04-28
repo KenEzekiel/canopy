@@ -7,6 +7,7 @@ export interface AppInfo {
   serverIp: string;
   port: number;
   domain: string;
+  customDomain?: string;
   framework: string;
   lastDeploy: string;
   createdAt: string;
