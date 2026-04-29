@@ -3,7 +3,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { CANOPY_DIR } from './config';
 
-const ENDPOINT = 'https://t.meshterm.live/ping';
+const ENDPOINT = 'https://meshterm-telemetry.ken35kiel.workers.dev/ping';
 const ID_FILE = path.join(CANOPY_DIR, '.telemetry-id');
 
 let cachedId: string | null = null;
