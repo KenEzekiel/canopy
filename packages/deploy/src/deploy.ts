@@ -10,6 +10,7 @@ import {
 import { ensureSSHKey, sshExec, sshUpload, rsyncUpload, waitForSSH, setSSHConfig } from './ssh';
 import { uploadSSHKey, createServer } from './provision';
 import { getDomain } from './config';
+import { track } from './telemetry';
 import { setupVPN, addVPNClient, restrictToVPN } from './vpn';
 import { validateAppName } from './validation';
 import type { Framework } from './detect';
@@ -31,6 +32,7 @@ function validateEnvVars(env: Record<string, string>): void {
 }
 
 function failWithCleanupHint(name: string, status: string, error: string): DeployResult {
+  track('deploy_fail', { reason: status });
   return {
     status,
     error: `${error}\n\nServer was provisioned but deploy failed. Run \`canopy destroy ${name}\` to clean up, or retry with \`canopy deploy\`.`,
@@ -71,6 +73,7 @@ export async function deploy({ projectPath, name, env, force = false, newServer 
   validateAppName(name);
   if (env) validateEnvVars(env);
   let customDomain = customDomainOpt;
+  track('deploy_start');
 
   // Validate and apply SSH config for existing server
   if (server) {
@@ -415,6 +418,7 @@ NGINX_EOF`);
   log('state', 'Deployment state saved');
 
   const protocol = (noSsl || sslFailed) ? 'http' : 'https';
+  track('deploy_success', { framework });
   return {
     status: 'deployed',
     url: `${protocol}://${appDomain}`,

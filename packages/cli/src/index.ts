@@ -5,7 +5,7 @@ import {
   listDeployments, removeDeployment, deleteServer, getDeployment,
   getServerForApp, removeServer, sshExec, validateAppName,
   deployTemplate, listTemplates, loadTemplate, setSSHConfig,
-  getSSHKeyPath,
+  getSSHKeyPath, trackTelemetry,
 } from '@canopy/deploy';
 import type { CanopyState } from '@canopy/deploy';
 import * as path from 'path';
@@ -96,6 +96,7 @@ program.command('scan [path]').description('Scan a project for security issues')
     const resolved = path.resolve(targetPath || process.cwd());
     try {
       const result = scan(resolved);
+      trackTelemetry('scan_run');
       if (opts.json) { console.log(JSON.stringify(result, null, 2)); process.exit(result.summary.critical > 0 ? 1 : 0); }
       console.log(); console.log(`  ${c.bold}canopy scan${c.reset}  ${c.dim}${resolved}${c.reset}`);
       printScore(result.score); printFindings(result.findings); printMeta(result.meta, result.summary);

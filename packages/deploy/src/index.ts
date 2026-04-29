@@ -18,3 +18,4 @@ export { deployTemplate } from './template-deploy';
 export type { TemplateDeployOpts, DeployResult as TemplateDeployResult } from './template-deploy';
 export { loadTemplate, listTemplates } from './templates';
 export type { Template } from './templates';
+export { track as trackTelemetry } from './telemetry';
