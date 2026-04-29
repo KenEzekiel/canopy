@@ -49,28 +49,32 @@ npx canopy-deploy scan
 ✓ Supabase RLS enabled
 ✓ CORS configured safely
 
-# 2. Deploy (auto-detects framework, generates Dockerfile, provisions VPS)
+# 2. Deploy — pick one:
+
+# Option A: Let Canopy provision a Hetzner VPS
 export CANOPY_HETZNER_TOKEN="your-token"
+export CANOPY_DOMAIN="yourdomain.com"
 npx canopy-deploy deploy --name myapp
 
-Scanning... ✓
-Detecting framework... Next.js ✓
-Provisioning VPS... ✓
-Building Docker image... ✓
-Deploying... ✓
-Configuring nginx... ✓
+# Option B: Bring your own server (any VPS with SSH + Docker)
+npx canopy-deploy deploy --name myapp --domain myapp.com --server 1.2.3.4
 
-🚀 Live at https://myapp.yourdomain.com
+# Both give you:
+🚀 Live at https://myapp.com
 
 # 3. Check status
 npx canopy-deploy status myapp
-✓ Running (port 3001)
 
-# 4. View logs
+# 4. SSH into the server
+npx canopy-deploy ssh myapp
+
+# 5. View logs
 npx canopy-deploy logs myapp
 ```
 
-Get a Hetzner token: [console.hetzner.cloud](https://console.hetzner.cloud) → Security → API Tokens → Generate (read+write).
+**Option A** — Get a Hetzner token: [console.hetzner.cloud](https://console.hetzner.cloud) → Security → API Tokens → Generate (read+write).
+
+**Option B** — Works with any server you can SSH into. Just needs Docker installed.
 
 ---
 
@@ -183,14 +187,22 @@ npx canopy-deploy scan [path]
 
 # Deploy to Hetzner VPS
 npx canopy-deploy deploy [path]
-  --name <name>                 App name (required, used for subdomain)
+  --name <name>                 App name (required)
+  --domain <domain>             Custom domain (e.g. myapp.com)
   --verbose                     Show step-by-step progress
   --force                       Skip scanner gate
   --new                         Force new server (don't reuse existing)
   --region <region>             Server region: fsn1, nbg1, hel1, ash, hil, sin (default: hel1)
   --env-file <path>             Load env vars from file
+  --no-ssl                      Skip SSL/certbot setup
   --private                     Deploy as VPN-only (WireGuard)
+  --server <ip>                 Use an existing server (skip Hetzner provisioning)
+  --ssh-port <port>             SSH port (default: 22)
+  --ssh-user <user>             SSH user (default: root)
   --json                        Output raw JSON
+
+# SSH into a deployed app's server
+npx canopy-deploy ssh <name>
 
 # Check app status
 npx canopy-deploy status <name>
@@ -211,9 +223,14 @@ npx canopy-deploy init
 
 **Environment variables:**
 ```bash
+# Required only if Canopy provisions your server (not needed with --server)
 CANOPY_HETZNER_TOKEN=your_hetzner_api_token_here
+
+# Base domain for subdomains (not needed if using --domain)
 CANOPY_DOMAIN=yourdomain.com
-CANOPY_SSL_EMAIL=admin@yourdomain.com  # optional
+
+# Optional
+CANOPY_SSL_EMAIL=admin@yourdomain.com
 ```
 
 Or use `.env` file (see `.env.example`).
@@ -225,10 +242,14 @@ Or use `.env` file (see `.env.example`).
 Already have a VPS? Skip Hetzner provisioning:
 
 ```bash
-npx canopy-deploy deploy --name myapp --server 1.2.3.4 --ssh-user root --ssh-port 22
+# Deploy with a custom domain — no CANOPY_DOMAIN or CANOPY_HETZNER_TOKEN needed
+npx canopy-deploy deploy --name myapp --domain myapp.com --server 1.2.3.4
+
+# Or with custom SSH config
+npx canopy-deploy deploy --name myapp --domain myapp.com --server 1.2.3.4 --ssh-user ubuntu --ssh-port 2222
 ```
 
-Works with any server you can SSH into — DigitalOcean, Linode, AWS Lightsail, Vultr, or any Ubuntu server with Docker installed.
+Works with any server you can SSH into — DigitalOcean, Linode, AWS Lightsail, Vultr, or any Ubuntu server with Docker installed. Point your domain's A record to the server IP, and Canopy handles nginx + SSL.
 
 ---
 
@@ -357,11 +378,12 @@ Interested in integrating Canopy into your AI agent, IDE, or platform? Want to c
 
 ## Roadmap
 
+- [x] Custom domain support (`--domain`)
+- [x] `canopy ssh` command for quick server access
 - [ ] Managed hosting (deploy without your own VPS)
 - [ ] More cloud providers (DigitalOcean, AWS Lightsail)
 - [ ] Auto-deploy on git push
 - [ ] Web dashboard
-- [ ] `canopy ssh` command for quick server access
 
 ---
 
